@@ -1,0 +1,29 @@
+{
+  "name": "lycoris-archive-terminal",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "predev": "node scripts/export-lycoris.mjs",
+    "dev": "vite --host 127.0.0.1",
+    "prebuild": "node scripts/export-lycoris.mjs",
+    "build": "tsc && vite build",
+    "format": "prettier --write src/lycoris src/audio.ts src/scrub-title.ts scripts/*.mjs index.html package.json tsconfig.json",
+    "check": "node --test scripts/check-lycoris.test.mjs scripts/check-archive-motion.test.mjs",
+    "check:shaders": "node scripts/check-archive-shaders.mjs",
+    "preview": "vite preview --host 127.0.0.1"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "dependencies": {
+    "@kitlangton/rolling-number": "0.4.1",
+    "three": "^0.183.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.183.0",
+    "prettier": "^3.9.6",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1"
+  }
+}

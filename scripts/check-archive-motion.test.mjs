@@ -1,0 +1,507 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { Matrix4, Vector3, PerspectiveCamera, Raycaster } from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import {
+  ArchiveSelection,
+  records,
+  CODE_ARCHIVE_ID,
+} from "../src/lycoris/data.ts";
+import {
+  ArchiveMotion,
+  cellKey,
+  fileAtCell,
+  selectionWave,
+  INSPECTION_LIFT,
+  PREVIEW_LIFT,
+  ARRAY_COLUMNS,
+  ARRAY_ROWS,
+} from "../src/lycoris/archive-motion.ts";
+import { SpecimenArray } from "../src/lycoris/archive-array.ts";
+import { FlowerPostEffects } from "../src/lycoris/flower-post.ts";
+import { updateArchiveCamera } from "../src/lycoris/archive-camera.ts";
+import {
+  MAX_GLITCH_SHIFT,
+  DORMANT_GLASS_OPACITY,
+  DORMANT_GLASS_ROUGHNESS,
+} from "../src/lycoris/archive-appearance.ts";
+
+const close = (actual, expected, tolerance = 1e-6) =>
+  assert.ok(
+    Math.abs(actual - expected) < tolerance,
+    actual + " != " + expected,
+  );
+function advance(motion, seconds, each = () => {}, fps = 60) {
+  for (let i = 0; i < seconds * fps; i++) {
+    motion.step(1 / fps);
+    each(1 / fps);
+  }
+}
+function settled() {
+  const motion = new ArchiveMotion();
+  motion.revealScene();
+  advance(motion, 6);
+  return motion;
+}
+const source = readFile(
+  new URL("../public/assets/lycoris-specimen.glb", import.meta.url),
+)
+  .then((buffer) =>
+    new GLTFLoader().parseAsync(
+      buffer.buffer.slice(
+        buffer.byteOffset,
+        buffer.byteOffset + buffer.byteLength,
+      ),
+      "",
+    ),
+  )
+  .then((gltf) => gltf.scene);
+
+test("buttons, category memory, search and picking resolve the same physical archive cell", () => {
+  const selection = new ArchiveSelection();
+  for (let i = 0; i < 160; i++) {
+    selection.stepRow(i % 3 === 0 ? -1 : 1);
+    if (i % 9 === 0) selection.stepCategory(-1);
+    if (i % 13 === 0) selection.stepCategory(1);
+    assert.equal(
+      fileAtCell({ lane: selection.laneTravel, row: selection.rowTravel }),
+      selection.index,
+    );
+  }
+  selection.select(37);
+  assert.equal(
+    fileAtCell({ lane: selection.laneTravel, row: selection.rowTravel }),
+    37,
+  );
+  const clicked = { lane: -11, row: 23 };
+  selection.select(fileAtCell(clicked), clicked);
+  assert.deepEqual(
+    { lane: selection.laneTravel, row: selection.rowTravel },
+    clicked,
+  );
+  const row = selection.rowTravel;
+  selection.stepRow(1);
+  assert.equal(selection.rowTravel, row + 1);
+  assert.equal(selection.index, 32);
+});
+
+test("extraction changes elevation at the selected slot and enables rotation only after clearance", () => {
+  const motion = settled();
+  const selected = motion.selected;
+  close(selected.lift.value, PREVIEW_LIFT);
+  assert.equal(motion.canRotate, false);
+  motion.setDetail(true);
+  let unlocked = false;
+  advance(motion, 5, () => {
+    assert.equal(motion.selected, selected);
+    const position = motion.position(selected);
+    const slot = motion.slotPosition(selected.cell);
+    close(position[0], slot[0]);
+    close(position[2], slot[2]);
+    if (motion.canRotate) {
+      assert.ok(motion.clearance > 0.3);
+      assert.ok(selected.lift.value > 3.7);
+      unlocked = true;
+    }
+  });
+  assert.ok(unlocked);
+  close(selected.lift.value, INSPECTION_LIFT);
+  assert.equal(motion.phase, "ready");
+});
+
+test("return holds world height until aligned, then descends and pulls the camera back", () => {
+  for (const fps of [30, 60, 120]) {
+    const motion = settled();
+    motion.setDetail(true);
+    advance(motion, 4, undefined, fps);
+    motion.rotationTarget = 1.5;
+    advance(motion, 2, undefined, fps);
+    motion.setDetail(false);
+    const held = motion.position(motion.selected)[1];
+    let aligned = false;
+    advance(
+      motion,
+      2,
+      () => {
+        if (motion.selected.rotation !== 0) {
+          close(motion.position(motion.selected)[1], held);
+          assert.equal(motion.phase, "aligning");
+          assert.ok(motion.detail > 0.98);
+        } else aligned = true;
+      },
+      fps,
+    );
+    assert.ok(aligned);
+    advance(motion, 4, undefined, fps);
+    close(motion.selected.lift.value, PREVIEW_LIFT);
+    assert.equal(motion.selected.rotation, 0);
+    assert.ok(motion.detail < 0.001);
+  }
+});
+
+test("changing selection preserves outgoing alignment and rapid reselect reuses its exact pose", () => {
+  const motion = settled();
+  motion.setDetail(true);
+  advance(motion, 4);
+  motion.rotationTarget = -2.1;
+  advance(motion, 2);
+  motion.setDetail(false);
+  const first = motion.selected;
+  const y = motion.position(first)[1];
+  motion.select({ lane: 0, row: 1 });
+  assert.equal(motion.outgoing[0], first);
+  advance(motion, 0.3, () => close(motion.position(first)[1], y));
+  const pose = structuredClone(first);
+  motion.select({ lane: 0, row: 0 });
+  assert.equal(motion.selected, first);
+  assert.deepEqual(first, pose);
+  assert.ok(!motion.outgoing.includes(first));
+  motion.setDetail(true);
+  advance(motion, 6);
+  assert.equal(motion.outgoing.length, 0);
+  assert.ok(motion.canRotate);
+});
+
+test("the production GLB array owns exactly one visible copy of each selected and returning cell", async () => {
+  const array = new SpecimenArray(await source);
+  const motion = settled();
+  motion.setBounds(array.bounds.min.y, array.bounds.max.y);
+  array.sync(motion);
+  assert.equal(array.instances.length, 10);
+  assert.equal(array.shells.length, ARRAY_COLUMNS * ARRAY_ROWS);
+  assert.equal(array.cells.length, ARRAY_COLUMNS * ARRAY_ROWS);
+  const first = motion.selected;
+  const extracted = array.models.get(first);
+  for (const instance of [...array.instances, array.shells[0]])
+    assert.ok(
+      extracted.children.some((mesh) => mesh.geometry === instance.geometry),
+    );
+  motion.setDetail(true);
+  advance(motion, 4, () => array.sync(motion));
+  assert.equal(array.models.get(first), extracted);
+  close(extracted.position.y, motion.position(first)[1]);
+  motion.rotationTarget = 1.2;
+  advance(motion, 2, () => array.sync(motion));
+  motion.setDetail(false);
+  motion.select({ lane: 1, row: 0 });
+  const matrix = new Matrix4();
+  let returnsToInstance = false;
+  advance(motion, 7, () => {
+    array.sync(motion);
+    const owned = new Set(
+      [motion.selected, ...motion.outgoing].map((c) => cellKey(c.cell)),
+    );
+    array.cells.forEach((cell, i) => {
+      array.instances[0].getMatrixAt(i, matrix);
+      const visible = Math.abs(matrix.determinant()) > 0.5;
+      assert.equal(visible, !owned.has(cellKey(cell)));
+      assert.equal(
+        array.shells[i].visible,
+        visible,
+        "a transparent shell overlaps its extracted copy",
+      );
+      if (cellKey(cell) === cellKey(first.cell) && visible)
+        returnsToInstance = true;
+    });
+    if (motion.outgoing.includes(first))
+      assert.equal(array.models.get(first), extracted);
+  });
+  assert.ok(returnsToInstance);
+  assert.equal(array.models.size, 1);
+  assert.ok(!array.models.has(first));
+});
+
+test("actual camera projection keeps the complete specimen framed throughout lift, rotation and return", async () => {
+  const array = new SpecimenArray(await source);
+  array.bounds.expandByVector(new Vector3(MAX_GLITCH_SHIFT, 0, 0));
+  const corners = [];
+  for (const x of [array.bounds.min.x, array.bounds.max.x])
+    for (const y of [array.bounds.min.y, array.bounds.max.y])
+      for (const z of [array.bounds.min.z, array.bounds.max.z])
+        corners.push(new Vector3(x, y, z));
+  for (const aspect of [0.65, 1.2, 2.0]) {
+    const motion = settled();
+    const camera = new PerspectiveCamera(34, aspect, 0.1, 150);
+    camera.position.set(-16.8, 14, 14.5);
+    const aim = new Vector3(0, -0.4, -1);
+    advance(motion, 3, (dt) => updateArchiveCamera(camera, aim, motion, dt));
+    const wide = camera.position.clone();
+    motion.setDetail(true);
+    const checkFrame = (dt) => {
+      updateArchiveCamera(camera, aim, motion, dt);
+      const position = new Vector3(...motion.position(motion.selected));
+      const rotation = new Matrix4().makeRotationY(motion.selected.rotation);
+      for (const corner of corners) {
+        const projected = corner
+          .clone()
+          .applyMatrix4(rotation)
+          .add(position)
+          .project(camera);
+        assert.ok(
+          Math.abs(projected.x) < 1 && Math.abs(projected.y) < 1,
+          "specimen clipped at aspect " + aspect + ": " + projected.toArray(),
+        );
+        assert.ok(projected.z > -1 && projected.z < 1);
+      }
+    };
+    advance(motion, 5, checkFrame);
+    assert.ok(camera.position.distanceTo(wide) > 12);
+    motion.rotationTarget = Math.PI * 1.75;
+    advance(motion, 4, checkFrame);
+    motion.setDetail(false);
+    advance(motion, 7, checkFrame);
+  }
+});
+
+test("idle rows keep visibly undulating after entrance and without further input", async () => {
+  const motion = settled();
+  const array = new SpecimenArray(await source);
+  const camera = new PerspectiveCamera(34, 1.2, 0.1, 150);
+  camera.position.set(-16.8, 14, 14.5);
+  const aim = new Vector3(0, -0.4, -1);
+  const matrix = new Matrix4();
+  const pixels = [],
+    heights = [],
+    neighborDifferences = [];
+  advance(motion, 6, (dt) => {
+    array.sync(motion);
+    updateArchiveCamera(camera, aim, motion, dt);
+    const i = array.cells.findIndex(
+      (cell) => cell.lane === 0 && cell.row === 1,
+    );
+    array.instances[0].getMatrixAt(i, matrix);
+    const point = new Vector3(0, array.bounds.max.y, 0).applyMatrix4(matrix);
+    heights.push(point.y);
+    pixels.push(point.project(camera).y * 350);
+    neighborDifferences.push(
+      motion.field({ lane: 0, row: 1 }) - motion.field({ lane: 0, row: 2 }),
+    );
+  });
+  const span = (values) => Math.max(...values) - Math.min(...values);
+  assert.ok(span(heights) > 1.0, "idle movement is too small to read");
+  assert.ok(
+    span(pixels) > 24,
+    "idle movement projects to less than 24 pixels at 700px stage height",
+  );
+  assert.ok(
+    span(neighborDifferences) > 0.65,
+    "rows move together instead of carrying a wave",
+  );
+  motion.setDetail(true);
+  advance(motion, 5);
+  advance(motion, 10, () =>
+    assert.ok(
+      motion.canRotate,
+      "the ongoing swell interrupts inspection clearance",
+    ),
+  );
+});
+
+test("frost dissolves only on the selected specimen, then returns without sharing its animated material", async () => {
+  const array = new SpecimenArray(await source);
+  const motion = settled();
+  array.sync(motion);
+  const dormantGlass = array.shells[0].material;
+  assert.ok(dormantGlass.isMeshPhysicalMaterial);
+  assert.equal(dormantGlass.roughness, DORMANT_GLASS_ROUGHNESS);
+  assert.ok(dormantGlass.transmission > 0.9);
+  assert.ok(dormantGlass.opacity > 0.65 && dormantGlass.opacity < 0.8);
+  assert.ok(dormantGlass.ior > 1.4 && dormantGlass.thickness > 0.2);
+  const first = motion.selected;
+  advance(motion, 2, () => array.sync(motion));
+  const state = array.surfaces.get(first);
+  const glassIndex = state.uniforms.findIndex(
+    (u) => u.uArchiveShell.value === 1,
+  );
+  const glass = state.materials[glassIndex];
+  const uniforms = state.uniforms[glassIndex];
+  assert.notEqual(glass, dormantGlass);
+  assert.ok(glass.opacity < 0.04 && glass.roughness < 0.2);
+  assert.ok(uniforms.uArchiveSelect.value > 0.99);
+  assert.ok(uniforms.uArchiveAge.value > 1.9);
+  const time = uniforms.uArchiveTime.value;
+  advance(motion, 0.3, () => array.sync(motion));
+  assert.ok(
+    uniforms.uArchiveTime.value > time,
+    "the data stream clock stopped",
+  );
+  motion.select({ lane: 0, row: 1 });
+  advance(motion, 0.6, () => array.sync(motion));
+  assert.ok(glass.opacity > 0.55 && glass.roughness > 0.55);
+  assert.equal(dormantGlass.opacity, DORMANT_GLASS_OPACITY);
+  motion.select({ lane: 0, row: 0 });
+  array.sync(motion);
+  assert.equal(array.surfaces.get(first), state);
+  advance(motion, 1.5, () => array.sync(motion));
+  assert.ok(uniforms.uArchiveSelect.value > 0.99);
+  motion.reduced = true;
+  advance(motion, 1, () => array.sync(motion));
+  assert.equal(uniforms.uArchiveFault.value, 0);
+  assert.equal(uniforms.uArchiveTime.value, 0);
+  assert.ok(
+    glass.opacity < 0.04,
+    "reduced motion should preserve the selected appearance",
+  );
+});
+
+test("transparent chambers have separate world depths and picking keeps the nearest physical cell", async () => {
+  const array = new SpecimenArray(await source);
+  const motion = settled();
+  array.sync(motion);
+  array.updateMatrixWorld(true);
+  const visible = array.shells.filter((shell) => shell.visible);
+  assert.ok(
+    visible.every((shell) => !shell.isInstancedMesh && shell.renderOrder === 0),
+  );
+  const depths = visible.map(
+    (shell) => new Vector3().setFromMatrixPosition(shell.matrixWorld).z,
+  );
+  assert.ok(new Set(depths).size >= ARRAY_ROWS);
+  const ray = new Raycaster(new Vector3(4.2, -1.3, 30), new Vector3(0, 0, -1));
+  const hits = ray.intersectObjects(visible);
+  assert.ok(hits.length > 1);
+  assert.deepEqual(array.cellFromHit(hits[0]), { lane: 1, row: 4 });
+  const current = array.surfaces.get(motion.selected);
+  const focus = current.uniforms[0].uArchiveFocus.value;
+  const position = motion.position(motion.selected);
+  close(focus.x, position[0]);
+  close(focus.y, position[1] + 0.12);
+  close(focus.z, position[2]);
+});
+
+test("post effects follow only the selected GLB flower through extraction, reselection and the structure view", async () => {
+  const array = new SpecimenArray(await source);
+  const motion = settled();
+  const post = new FlowerPostEffects();
+  const sync = () => {
+    array.sync(motion);
+    post.update(
+      array.models.get(motion.selected),
+      array.surfaces.get(motion.selected),
+      1 / 60,
+      false,
+      array.shells,
+    );
+  };
+  sync();
+  const first = motion.selected;
+  const firstModel = array.models.get(first);
+  assert.equal(post.mask.flowers.size, 6);
+  assert.deepEqual(
+    new Set(
+      [...post.mask.flowers.keys()].map((mesh) => mesh.userData.assemblyPart),
+    ),
+    new Set(["petals", "stamens", "pedicels", "stem"]),
+  );
+  motion.setDetail(true);
+  advance(motion, 4, () => {
+    sync();
+    for (const [flower, proxy] of post.mask.flowers) {
+      assert.equal(proxy.geometry, flower.geometry);
+      assert.deepEqual(proxy.matrix.elements, flower.matrixWorld.elements);
+      assert.equal(flower.parent, firstModel);
+    }
+  });
+  motion.select({ lane: 1, row: 0 });
+  sync();
+  for (const flower of post.mask.flowers.keys()) {
+    assert.equal(flower.parent, array.models.get(motion.selected));
+    assert.notEqual(flower.parent, firstModel);
+  }
+  const inspector = (await source).clone(true);
+  inspector.position.set(2, 3, -1);
+  inspector.rotation.y = 0.8;
+  const petal = inspector.children.find(
+    (mesh) => mesh.userData.assemblyPart === "petals",
+  );
+  petal.position.x += 1.7;
+  post.update(inspector, array.surfaces.get(motion.selected), 1 / 60, false);
+  for (const [flower, proxy] of post.mask.flowers) {
+    assert.equal(flower.parent, inspector);
+    assert.deepEqual(proxy.matrix.elements, flower.matrixWorld.elements);
+  }
+  assert.ok(post.mask.bounds.max.x > 3);
+  post.update(undefined, undefined, 0, false);
+  assert.equal(post.mask.flowers.size, 0);
+  assert.equal(post.mask.scene.children.length, 0);
+  post.dispose();
+});
+
+test("flower post clock advances independently of a stationary inspector and reduced motion preserves a static selected signal", async () => {
+  const array = new SpecimenArray(await source);
+  const motion = settled();
+  advance(motion, 2, () => array.sync(motion));
+  const post = new FlowerPostEffects();
+  const model = array.models.get(motion.selected);
+  const state = array.surfaces.get(motion.selected);
+  post.setSize(900, 700);
+  for (let i = 0; i < 180; i++) post.update(model, state, 1 / 60, false);
+  close(post.uniforms.uTime.value, 3);
+  close(post.uniforms.uAge.value, 3);
+  assert.ok(post.uniforms.uStrength.value > 0.99);
+  post.update(model, state, 1 / 60, true);
+  assert.equal(post.uniforms.uTime.value, 0);
+  assert.equal(post.uniforms.uFault.value, 0);
+  assert.equal(post.uniforms.uAge.value, 4);
+  assert.ok(post.uniforms.uStrength.value > 0.99);
+  assert.deepEqual(post.uniforms.uResolution.value.toArray(), [900, 700]);
+  post.dispose();
+});
+
+test("the code archive has a cyan flower without recoloring other records or its chamber", async () => {
+  const array = new SpecimenArray(await source);
+  const motion = settled();
+  array.sync(motion);
+  const red = array.models.get(motion.selected);
+  const colors = red.children.map((mesh) => mesh.material.color.clone());
+  const selection = new ArchiveSelection();
+  selection.select(
+    records.findIndex((record) => record.id === CODE_ARCHIVE_ID),
+  );
+  motion.select({ lane: selection.laneTravel, row: selection.rowTravel });
+  array.sync(motion);
+  const cyan = array.models.get(motion.selected);
+  const state = array.surfaces.get(motion.selected);
+  assert.equal(state.cyan, true);
+  cyan.children.forEach((mesh, index) => {
+    const part = mesh.userData.assemblyPart;
+    assert.ok(red.children[index].material.color.equals(colors[index]));
+    if (["petals", "stamens", "pedicels", "stem"].includes(part)) {
+      const color = mesh.material.color;
+      assert.ok(color.g > color.r && color.b > color.r, part);
+    } else assert.ok(mesh.material.color.equals(colors[index]), part);
+  });
+  const post = new FlowerPostEffects();
+  post.update(cyan, state, 1 / 60, false);
+  assert.equal(post.uniforms.uCyan.value, 1);
+  motion.select({ lane: 0, row: 1 });
+  array.sync(motion);
+  const next = array.models.get(motion.selected);
+  next.children.forEach((mesh, index) => {
+    assert.ok(mesh.material.color.equals(colors[index]));
+  });
+  post.update(next, array.surfaces.get(motion.selected), 1 / 60, false);
+  assert.equal(post.uniforms.uCyan.value, 0);
+  post.dispose();
+});
+
+test("wave keeps its negative trough and reduced motion still completes extraction and return", () => {
+  const values = Array.from({ length: 80 }, (_, i) =>
+    selectionWave(i / 10, 0.4),
+  );
+  assert.ok(Math.min(...values) < 0);
+  assert.ok(Math.max(...values) > 0);
+  const motion = settled();
+  motion.reduced = true;
+  motion.setDetail(true);
+  advance(motion, 1);
+  close(motion.selected.lift.value, INSPECTION_LIFT);
+  motion.rotationTarget = 1.4;
+  advance(motion, 0.5);
+  motion.setDetail(false);
+  advance(motion, 1);
+  close(motion.selected.lift.value, PREVIEW_LIFT);
+  assert.equal(motion.selected.rotation, 0);
+  assert.equal(motion.phase, "browsing");
+});
