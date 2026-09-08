@@ -1,0 +1,14 @@
+﻿彼岸 / LYCORIS
+LY-033 — C# Analyzers
+Directory.Build.props
+2026.09.08 / 彼岸手记
+
+把旧站的一份代码配置封存为青色标本。这里保留了 UNHD 的 C# 分析器配置与最初的首页问候，可阅读原文或下载原文件。
+
+hello there ! — 这是 unhd.github.io 原首页留下的问候。原站的 C# Analyzers 链接，如今收录在彼岸标本室的这份个人档案中。
+
+Directory.Build.props 保留原有内容：警告视为错误、生成文档、preview 语言版本与 net8.0 默认目标框架，以及 12 项启用的分析器包引用。原文件中的版本、规则排除项和注释均按原样归档。
+
+青色花体为这份代码档案的专属标记。打开「配置原文」可阅读全文；下载按钮提供原始 .props 文件，旧站首页也保留了独立快照。
+
+个人站点归档 / 原文件：Directory.Build.props
