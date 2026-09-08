@@ -1,0 +1,33 @@
+.ui-signal-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  overflow: hidden;
+  pointer-events: none;
+}
+.ui-signal-fragment {
+  position: absolute;
+  display: block;
+  height: 1px;
+  opacity: 0;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--red) 23%,
+    transparent 25%,
+    #a6d7d5 37%,
+    transparent 39%,
+    var(--red) 80%,
+    transparent
+  );
+  transform-origin: left;
+}
+[data-ui-motion="reduced"] .ui-signal-layer,
+.reduce-motion .ui-signal-layer {
+  display: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  #stage:not([data-ui-motion="full"]) .ui-signal-layer {
+    display: none;
+  }
+}

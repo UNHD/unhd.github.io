@@ -1,12 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { Matrix4, Vector3, PerspectiveCamera, Raycaster } from "three";
+import { Box3, Matrix4, Vector3, PerspectiveCamera, Raycaster } from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import {
   ArchiveSelection,
   records,
   CODE_ARCHIVE_ID,
+  parts,
 } from "../src/lycoris/data.ts";
 import {
   ArchiveMotion,
@@ -21,6 +22,7 @@ import {
 import { SpecimenArray } from "../src/lycoris/archive-array.ts";
 import { FlowerPostEffects } from "../src/lycoris/flower-post.ts";
 import { updateArchiveCamera } from "../src/lycoris/archive-camera.ts";
+import { fitInspectorBounds } from "../src/lycoris/inspector-framing.ts";
 import {
   MAX_GLITCH_SHIFT,
   DORMANT_GLASS_OPACITY,
@@ -57,6 +59,43 @@ const source = readFile(
     ),
   )
   .then((gltf) => gltf.scene);
+
+test("structure framing keeps the production flower and all six expanded parts inside wide and mobile views", async () => {
+  const model = (await source).clone(true);
+  model.rotation.y = 0.3;
+  const bounds = new Box3().setFromObject(model);
+  model.traverse((mesh) => {
+    if (!mesh.isMesh) return;
+    const part = parts.find((part) => part.id === mesh.userData.assemblyPart);
+    if (part) mesh.position.add(new Vector3().fromArray(part.offset));
+  });
+  bounds.union(new Box3().setFromObject(model));
+  for (const aspect of [0.65, 1, 3.3]) {
+    const camera = new PerspectiveCamera(34, aspect, 0.1, 150);
+    const target = new Vector3();
+    camera.position.set(5.3, 2.5, 9.8);
+    camera.lookAt(target);
+    const direction = camera.getWorldDirection(new Vector3());
+    fitInspectorBounds(camera, target, bounds);
+    assert.ok(
+      camera.getWorldDirection(new Vector3()).distanceTo(direction) < 1e-6,
+    );
+    for (const x of [bounds.min.x, bounds.max.x])
+      for (const y of [bounds.min.y, bounds.max.y])
+        for (const z of [bounds.min.z, bounds.max.z]) {
+          const point = new Vector3(x, y, z).project(camera);
+          assert.ok(
+            Math.abs(point.x) <= 0.85,
+            `horizontal clipping at aspect ${aspect}`,
+          );
+          assert.ok(
+            Math.abs(point.y) <= 0.85,
+            `vertical clipping at aspect ${aspect}`,
+          );
+          assert.ok(point.z > -1 && point.z < 1);
+        }
+  }
+});
 
 test("buttons, category memory, search and picking resolve the same physical archive cell", () => {
   const selection = new ArchiveSelection();

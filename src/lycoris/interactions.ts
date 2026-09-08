@@ -1,4 +1,12 @@
-import { $, selection, scene, updateRecord, toast, symbol } from "./app";
+import {
+  $,
+  selection,
+  scene,
+  updateRecord,
+  toast,
+  symbol,
+  uiGlitch,
+} from "./app";
 import { records, categories, searchRecords, parts } from "./data";
 import archivedBuildProps from "../../public/Directory.Build.props?raw";
 import { TerminalAudio } from "../audio";
@@ -55,6 +63,7 @@ function save(key: string, data: unknown) {
 }
 function applyPrefs() {
   scene.reduced = prefs.reduced;
+  uiGlitch.setReduced(prefs.reduced);
   scene.setQuality(prefs.quality);
   audio.enabled = prefs.sound;
   document.body.classList.toggle("reduce-motion", prefs.reduced);
@@ -192,7 +201,7 @@ function openDetail() {
 function renderDetail() {
   const r = selection.record;
   $(".dossier").innerHTML =
-    `<button class="detail-back" data-action="back">← 返回馆藏 <span>ESC</span></button><div class="detail-identity"><span class="micro">${r.id} / ${categories[r.category].en}</span><h1>${r.title}</h1><p>${r.en}</p></div><nav class="detail-tabs" aria-label="档案内容">${[
+    `<button class="detail-back" data-action="back">← 返回花海 <span>ESC</span></button><div class="detail-identity"><span class="micro">${r.id} / ${categories[r.category].en}</span><h1>${r.title}</h1><p>${r.en}</p></div><nav class="detail-tabs" aria-label="档案内容">${[
       ["overview", "档案概述"],
       ...(r.attachment ? [["source", "配置原文"]] : []),
       ["notes", "研究记录"],
@@ -294,9 +303,9 @@ function openSettings() {
   createDialog(
     "settings-dialog",
     "偏好设置",
-    `<div class="dialog-header"><div><span class="micro">TERMINAL PREFERENCES</span><h2>观察偏好</h2></div><button class="close-button" data-action="close" aria-label="关闭设置">× <small>ESC</small></button></div><div class="settings-options">${[
+    `<div class="dialog-header"><div><span class="micro">GARDEN PREFERENCES</span><h2>观察偏好</h2></div><button class="close-button" data-action="close" aria-label="关闭设置">× <small>ESC</small></button></div><div class="settings-options">${[
       ["sound", "界面音效", "翻阅、读取与收藏时的轻微提示音"],
-      ["reduced", "减少动态效果", "简化启动、镜头移动与数字滚动"],
+      ["reduced", "减少动态效果", "暂停起伏、数据流与界面微弱故障效果"],
       ["quality", "高质量渲染", "保留更细腻的轮廓与高分辨率画面"],
     ]
       .map(
@@ -305,7 +314,7 @@ function openSettings() {
       )
       .join(
         "",
-      )}</div><div class="settings-actions"><button class="secondary-button" data-action="fullscreen">切换全屏 ⤢</button><button class="secondary-button" data-action="replay">重播启动序列 ↗</button></div><p class="credits">非官方艺术实验。交互参考 <a href="https://github.com/LBEILC/RhineLabUI" target="_blank" rel="noopener">RhineLabUI ↗</a>；石蒜模型与档案内容为本项目原创。字体 <a href="${import.meta.env.BASE_URL}fonts/MiSans-license.pdf" target="_blank" rel="noopener">MiSans ↗</a>，编号滚动 <a href="${import.meta.env.BASE_URL}licenses/rolling-number.txt" target="_blank" rel="noopener">Rolling Number ↗</a>。</p>`,
+      )}</div><div class="settings-actions"><button class="secondary-button" data-action="fullscreen">切换全屏 ⤢</button><button class="secondary-button" data-action="replay">重看花海显影 ↗</button></div><p class="credits">非官方艺术实验。交互参考 <a href="https://github.com/LBEILC/RhineLabUI" target="_blank" rel="noopener">RhineLabUI ↗</a>；石蒜模型与档案内容为本项目原创。字体 <a href="${import.meta.env.BASE_URL}fonts/MiSans-license.pdf" target="_blank" rel="noopener">MiSans ↗</a>，编号滚动 <a href="${import.meta.env.BASE_URL}licenses/rolling-number.txt" target="_blank" rel="noopener">Rolling Number ↗</a>。</p>`,
   );
   dialog!.querySelectorAll<HTMLInputElement>("[data-pref]").forEach((input) =>
     input.addEventListener("change", () => {
@@ -342,7 +351,7 @@ function replay() {
   closeDialog();
   closeDetail();
   boot?.dispose();
-  boot = new BootSequence(scene, prefs.reduced, symbol);
+  boot = new BootSequence(scene, prefs.reduced);
   boot.start();
 }
 

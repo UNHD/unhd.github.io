@@ -8,6 +8,7 @@ import { SpecimenArray } from "./archive-array";
 import { updateArchiveCamera } from "./archive-camera";
 import { FlowerPostEffects } from "./flower-post";
 import { applyCyanFlower } from "./specimen-color";
+import { fitInspectorBounds } from "./inspector-framing";
 
 export type SceneMode = "archive" | "detail" | "inspect";
 const approach = (a: number, b: number, dt: number, speed = 5) =>
@@ -322,12 +323,42 @@ export class SpecimenScene {
     this.flowerPost.setSize(drawingSize.x, drawingSize.y);
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
+    if (this.mode === "inspect") this.fitInspector();
   }
   revealScene() {
     this.motion.revealScene();
   }
   hideScene() {
     this.motion.revealTarget = 0;
+  }
+  /** Opening linework meets the actual selected flower in viewport coordinates. */
+  flowerScreenAnchor() {
+    const model = this.archive?.models.get(this.motion.selected);
+    if (!model || !this.archive?.visible) return undefined;
+    model.updateWorldMatrix(true, true);
+    const bounds = new THREE.Box3();
+    model.traverse((object) => {
+      if (
+        object instanceof THREE.Mesh &&
+        ["petals", "stamens", "pedicels"].includes(object.userData.assemblyPart)
+      )
+        bounds.union(new THREE.Box3().setFromObject(object));
+    });
+    if (bounds.isEmpty()) return undefined;
+    const projected = new THREE.Box2();
+    for (const x of [bounds.min.x, bounds.max.x])
+      for (const y of [bounds.min.y, bounds.max.y])
+        for (const z of [bounds.min.z, bounds.max.z]) {
+          const point = new THREE.Vector3(x, y, z).project(this.camera);
+          projected.expandByPoint(new THREE.Vector2(point.x, point.y));
+        }
+    const rect = this.host.getBoundingClientRect();
+    const center = projected.getCenter(new THREE.Vector2());
+    return {
+      x: rect.left + ((center.x + 1) * rect.width) / 2,
+      y: rect.top + ((1 - center.y) * rect.height) / 2,
+      width: ((projected.max.x - projected.min.x) * rect.width) / 2,
+    };
   }
   private tintInspector(index: number) {
     for (const item of this.inspectorMaterials) {
@@ -385,6 +416,31 @@ export class SpecimenScene {
   }
   setExploded(ids: string[]) {
     this.exploded = new Set(ids);
+    if (this.mode === "inspect" && ids.length) this.fitInspector();
+  }
+  private fitInspector() {
+    this.inspector.updateWorldMatrix(true, true);
+    const bounds = new THREE.Box3();
+    for (const item of this.partMeshes) {
+      const current = new THREE.Box3().setFromObject(item.mesh);
+      bounds.union(current);
+      const end = item.origin.clone();
+      const part = parts.find((part) => part.id === item.part);
+      if (part && this.exploded.has(item.part))
+        end.add(new THREE.Vector3().fromArray(part.offset));
+      const delta = end
+        .sub(item.mesh.position)
+        .applyMatrix3(
+          new THREE.Matrix3().setFromMatrix4(item.mesh.parent!.matrixWorld),
+        );
+      bounds.union(current.translate(delta));
+    }
+    fitInspectorBounds(this.camera, this.controls.target, bounds);
+    this.controls.maxDistance = Math.max(
+      22,
+      this.camera.position.distanceTo(this.controls.target) * 1.3,
+    );
+    this.controls.update();
   }
   getExploded() {
     return [...this.exploded];
@@ -404,13 +460,15 @@ export class SpecimenScene {
     this.controls.target.set(0, 0, 0);
     this.controls.update();
     this.inspectorRotation = this.inspectorTarget = 0.3;
+    this.inspector.rotation.y = 0.3;
+    this.fitInspector();
   }
   zoom(direction: number) {
     this.temp
       .copy(this.camera.position)
       .sub(this.controls.target)
       .multiplyScalar(direction > 0 ? 0.85 : 1.18)
-      .clampLength(4.2, 22);
+      .clampLength(this.controls.minDistance, this.controls.maxDistance);
     this.camera.position.copy(this.controls.target).add(this.temp);
     this.controls.update();
   }

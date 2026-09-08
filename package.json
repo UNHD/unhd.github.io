@@ -9,7 +9,7 @@
     "prebuild": "node scripts/export-lycoris.mjs",
     "build": "tsc && vite build",
     "format": "prettier --write src/lycoris src/audio.ts src/scrub-title.ts scripts/*.mjs index.html package.json tsconfig.json",
-    "check": "node --test scripts/check-lycoris.test.mjs scripts/check-archive-motion.test.mjs",
+    "check": "node --test scripts/check-lycoris.test.mjs scripts/check-archive-motion.test.mjs scripts/check-opening.test.mjs",
     "check:shaders": "node scripts/check-archive-shaders.mjs",
     "preview": "vite preview --host 127.0.0.1"
   },
