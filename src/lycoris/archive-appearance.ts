@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { records } from "./data.ts";
 import { applyCyanFlower } from "./specimen-color.ts";
 
-// Glitch is now a masked image pass; it never displaces model vertices.
+// Image-space distortion leaves the original model vertices untouched.
 export const MAX_GLITCH_SHIFT = 0;
 export const DORMANT_GLASS_OPACITY = 0.72;
 export const DORMANT_GLASS_ROUGHNESS = 0.66;
@@ -44,7 +44,7 @@ float archiveHash(vec2 p) {
 }
 `;
 
-/** Stable physical surfaces; animated signals live in the flower-only post pass. */
+/** Stable physical surfaces; animated signals live in the image post pass. */
 export function patchArchiveShader(shader: Shader, uniforms: ArchiveUniforms) {
   Object.assign(shader.uniforms, uniforms);
   shader.vertexShader = declarations + shader.vertexShader;

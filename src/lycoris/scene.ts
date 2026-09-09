@@ -653,6 +653,27 @@ export class SpecimenScene {
       this.reduced,
       covers,
       records[this.motion.selected.index]?.flowerColor === "cyan",
+      this.mode === "inspect"
+        ? Math.max(
+            Math.abs(this.inspectorTarget - this.inspectorRotation),
+            this.partMeshes.reduce(
+              (amount, item) =>
+                Math.max(
+                  amount,
+                  Math.abs(
+                    (this.exploded.has(item.part) ? 1 : 0) - item.progress,
+                  ),
+                ),
+              0,
+            ),
+          )
+        : Math.abs(this.motion.selected.lift.velocity) * 0.2 +
+            Math.abs(this.motion.trackLane.velocity) * 0.3 +
+            Math.abs(this.motion.trackRow.velocity) * 0.3 +
+            Math.abs(
+              this.motion.rotationTarget - this.motion.selected.rotation,
+            ) *
+              0.25,
     );
     this.flowerPost.render(this.renderer, this.scene, this.camera);
     if (this.motion.revealTarget > 0 && this.archive.visible)

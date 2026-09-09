@@ -109,6 +109,7 @@ uniform vec4 uMaskRect;
 uniform float uTime;
 uniform float uAge;
 uniform float uFault;
+uniform float uDistortion;
 uniform float uSeed;
 uniform float uStrength;
 uniform float uCyan;
@@ -146,9 +147,50 @@ float signalDigit(vec2 uv, float digit) {
 void main() {
   vec4 sceneColor = texture2D(tScene, vUv);
   vec3 result = sceneColor.rgb;
-  float coverage = flowerCoverage(vUv) * uStrength;
-  if (coverage > 0.001) {
-    vec2 local = (vUv - uBounds.xy) / max(uBounds.zw, vec2(0.0001));
+  float alpha = sceneColor.a;
+  vec2 pixel = 1.0 / uResolution;
+  vec2 flowerSize = max(uBounds.zw, pixel);
+  vec2 center = uBounds.xy + flowerSize * vec2(0.5, 0.55);
+  vec2 radius = flowerSize * vec2(0.68, 0.58) + pixel * 24.0;
+  vec2 fieldUV = (vUv - center) / radius;
+  float field = 1.0 - smoothstep(0.55, 1.35, length(fieldUV));
+
+  // The field includes air around the specimen. Warp the rendered image first,
+  // so the actual silhouette, nearby glass and background bend together.
+  if (field > 0.001) {
+    float strength = field * uStrength;
+    float tick = floor(uTime * 10.0);
+    float band = floor((vUv.y - center.y) * uResolution.y / 11.0);
+    float bandSeed = signalHash(vec2(band + uSeed, tick));
+    float tear = step(0.73, bandSeed) *
+      (signalHash(vec2(band + uSeed, tick + 23.0)) * 2.0 - 1.0) * uFault;
+    float scanY = mod(uTime * 0.68, 3.2) - 1.6;
+    float scan = exp(-pow((fieldUV.y - scanY) / 0.13, 2.0));
+    float bend = sin(fieldUV.y * 5.5 + uTime * 1.65 + uSeed) *
+      (0.65 + 0.35 * cos(fieldUV.x * 3.0 - uTime));
+    float reach = clamp(flowerSize.x * uResolution.x * 0.09, 16.0, 46.0);
+    vec2 offset = vec2(
+      bend * (2.0 + 7.0 * uDistortion) * uDistortion +
+        tear * reach + scan * sin(fieldUV.x * 4.0) * 6.0 * uDistortion,
+      sin(fieldUV.x * 5.0 - uTime * 1.1) * 2.5 * uDistortion +
+        tear * 3.0
+    ) * pixel * strength;
+    vec2 sourceUV = clamp(vUv + offset, pixel * 0.5, 1.0 - pixel * 0.5);
+    vec4 warped = texture2D(tScene, sourceUV);
+    result = warped.rgb;
+    alpha = warped.a;
+
+    // Separate the channels along the tear, including at the flower's edge.
+    vec2 separation = vec2((1.1 + 7.0 * uFault) * uDistortion, 0.4 * uFault) * pixel * strength;
+    vec3 split = vec3(
+      texture2D(tScene, clamp(sourceUV + separation, pixel * 0.5, 1.0 - pixel * 0.5)).r,
+      warped.g,
+      texture2D(tScene, clamp(sourceUV - separation, pixel * 0.5, 1.0 - pixel * 0.5)).b
+    );
+    result = mix(result, split, uDistortion * 0.8);
+
+    float coverage = flowerCoverage(sourceUV) * uStrength;
+    vec2 local = (sourceUV - uBounds.xy) / flowerSize;
     vec2 cells = max(uBounds.zw * uResolution / vec2(9.0, 13.0), vec2(8.0, 12.0));
     float column = floor(local.x * cells.x);
     float seed = signalHash(vec2(column, uSeed));
@@ -159,31 +201,42 @@ void main() {
     float stream = signalDigit(vec2(fract(local.x * cells.x), fract(scroll)), digit) * trail;
     float head = 1.0 - smoothstep(0.0, 0.055, tail);
 
-    vec2 inkUV = local * vec2(4.0, 3.2) + uSeed;
-    float warp = signalNoise(inkUV * 1.7 + vec2(uTime * 0.055, -uTime * 0.025));
-    float ink = signalNoise(inkUV * 2.4 + warp * 1.4) * 0.68 + signalNoise(inkUV * 5.9 - warp) * 0.32;
-    float frontier = 0.18 + 0.64 * (1.0 - exp(-uAge * 0.45));
-    float wet = 1.0 - smoothstep(frontier - 0.04, frontier + 0.065, local.y + (ink - 0.5) * 0.33);
-    float stain = wet * smoothstep(0.33, 0.68, ink);
-    result = mix(result, mix(vec3(0.34, 0.003, 0.018), vec3(0.003, 0.28, 0.3), uCyan), stain * 0.3);
+    if (coverage > 0.001) {
+      vec2 inkUV = local * vec2(4.0, 3.2) + uSeed;
+      float warp = signalNoise(inkUV * 1.7 + vec2(uTime * 0.055, -uTime * 0.025));
+      float ink = signalNoise(inkUV * 2.4 + warp * 1.4) * 0.68 + signalNoise(inkUV * 5.9 - warp) * 0.32;
+      float frontier = 0.18 + 0.64 * (1.0 - exp(-uAge * 0.45));
+      float wet = 1.0 - smoothstep(frontier - 0.04, frontier + 0.065, local.y + (ink - 0.5) * 0.33);
+      float stain = wet * smoothstep(0.33, 0.68, ink);
+      result = mix(result, mix(vec3(0.34, 0.003, 0.018), vec3(0.003, 0.28, 0.3), uCyan), stain * 0.3 * coverage);
+    }
 
-    float band = floor(vUv.y * uResolution.y / 6.0);
-    float frame = floor(uTime * 11.0);
-    float glitch = step(0.7, signalHash(vec2(band, frame + uSeed))) * uFault;
-    vec2 shifted = vUv + vec2((signalHash(vec2(frame, band)) * 2.0 - 1.0) * 8.0 * glitch / uResolution.x, 0.0);
-    // Both ends of the image tear must be visible flower pixels. This prevents
-    // dragging the lid, glass, labels or background into the effect.
-    float shiftedCoverage = flowerCoverage(shifted);
-    vec3 tornColor = texture2D(tScene, shifted).rgb * mix(vec3(1.5, 0.45, 0.65), vec3(0.45, 1.4, 1.5), uCyan);
-    result = mix(result, tornColor, glitch * shiftedCoverage * 0.78);
-    float scan = pow(0.5 + 0.5 * sin(vUv.y * uResolution.y * 2.1), 10.0);
-    result += glitch * (scan + 0.22) * mix(vec3(0.9, 0.08, 0.15), vec3(0.08, 0.85, 0.9), uCyan);
+    // Detached scan fragments sample visible source flower pixels, but their
+    // destination may lie outside the silhouette. Foreground occlusion remains
+    // part of the source mask; no extra scene render or history buffer is needed.
+    vec3 signalColor = mix(vec3(1.35, 0.035, 0.1), vec3(0.015, 0.95, 1.25), uCyan);
+    float echo = 0.0;
+    if (uFault > 0.001) {
+      float fragment = step(0.56, signalHash(vec2(band + 7.0, tick + uSeed)));
+      float direction = bandSeed > 0.5 ? 1.0 : -1.0;
+      vec2 echoUV = sourceUV + vec2(direction * reach * (0.55 + uFault), -tear * 5.0) * pixel;
+      echo = flowerCoverage(echoUV) * fragment * uFault * strength * (1.0 - coverage * 0.8);
+      vec3 echoColor = texture2D(tScene, clamp(echoUV, pixel * 0.5, 1.0 - pixel * 0.5)).rgb;
+      float echoLuma = dot(echoColor, vec3(0.2126, 0.7152, 0.0722));
+      result += (echoColor * 0.32 + signalColor * (0.2 + echoLuma)) * echo * 0.58;
+    }
+
     vec3 streamColor = mix(vec3(2.2, 0.09, 0.065), vec3(0.01, 0.95, 1.2), uCyan);
     vec3 headColor = mix(vec3(3.0, 1.4, 0.95), vec3(0.25, 1.6, 1.8), uCyan);
-    result += mix(streamColor, headColor, head) * stream;
-    result = mix(sceneColor.rgb, result, coverage);
+    float stray = (1.0 - coverage) * step(0.84, seed) *
+      uDistortion * (0.08 + 0.32 * uFault) * strength;
+    result += mix(streamColor, headColor, head) * stream * (coverage + stray);
+    float hairline = pow(0.5 + 0.5 * sin(vUv.y * uResolution.y * 1.6), 14.0);
+    result += signalColor * hairline * abs(tear) * strength * 0.11;
+    // Emitted fragments also remain visible against the transparent scene sky.
+    alpha = max(alpha, clamp(echo * 0.5 + stream * stray * 0.6, 0.0, 1.0));
   }
-  gl_FragColor = vec4(result, sceneColor.a);
+  gl_FragColor = vec4(result, alpha);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }
@@ -209,7 +262,7 @@ export function cropFlowerCamera(
   target.projectionMatrixInverse.copy(target.projectionMatrix).invert();
 }
 
-/** Render the image once, then apply signals through the visible flower mask. */
+/** One local image distortion field, with flower-sourced signal fragments. */
 export class FlowerPostEffects {
   readonly mask = new FlowerMask();
   readonly uniforms = {
@@ -223,6 +276,7 @@ export class FlowerPostEffects {
     uTime: { value: 0 },
     uAge: { value: 0 },
     uFault: { value: 0 },
+    uDistortion: { value: 0 },
     uSeed: { value: 0 },
     uStrength: { value: 0 },
     uCyan: { value: 0 },
@@ -242,6 +296,8 @@ export class FlowerPostEffects {
   });
   private quad = new FullScreenQuad(this.material);
   private state?: ArchiveSurface;
+  private root?: THREE.Object3D;
+  private activity = 0;
   private age = 0;
   private time = 0;
   private point = new THREE.Vector3();
@@ -277,11 +333,13 @@ export class FlowerPostEffects {
     reduced: boolean,
     covers: THREE.Mesh[] = [],
     cyan = state?.cyan ?? false,
+    activity = 0,
   ) {
     this.uniforms.uCyan.value = cyan ? 1 : 0;
     this.mask.sync(root, covers);
-    if (state !== this.state) {
+    if (state !== this.state || root !== this.root) {
       this.state = state;
+      this.root = root;
       this.age = 0;
     }
     if (!reduced) {
@@ -289,6 +347,9 @@ export class FlowerPostEffects {
       this.age += dt;
     }
     const interval = (this.age + 0.6) % 3.7;
+    this.activity +=
+      (THREE.MathUtils.clamp(activity, 0, 1) - this.activity) *
+      (1 - Math.exp(-Math.max(0, dt) * 9));
     this.uniforms.uTime.value = reduced ? 0 : this.time;
     this.uniforms.uAge.value = reduced ? 4 : this.age;
     this.uniforms.uFault.value = reduced
@@ -296,7 +357,11 @@ export class FlowerPostEffects {
       : Math.max(
           Math.exp(-this.age * 3.6),
           interval < 0.23 ? Math.sin((interval / 0.23) * Math.PI) * 0.65 : 0,
+          this.activity * 0.7,
         );
+    this.uniforms.uDistortion.value = reduced
+      ? 0
+      : 0.16 + this.uniforms.uFault.value * 0.84;
     this.uniforms.uSeed.value = state?.uniforms[0].uArchiveSeed.value ?? 0;
     this.uniforms.uStrength.value = root ? (state?.amount ?? 1) : 0;
   }
@@ -334,7 +399,8 @@ export class FlowerPostEffects {
       maxX = maxY = 1;
     }
     const { x: width, y: height } = this.uniforms.uResolution.value;
-    // Include the 8px glitch displacement and multisample/filter footprints.
+    // This mask stores undisplaced source coverage. Output tears may extend
+    // beyond it; only multisample/filter footprints need extra source padding.
     const left = Math.max(0, Math.floor(minX * width) - 10);
     const bottom = Math.max(0, Math.floor(minY * height) - 10);
     const right = Math.min(width, Math.ceil(maxX * width) + 10);

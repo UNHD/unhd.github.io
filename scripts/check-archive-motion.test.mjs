@@ -433,7 +433,7 @@ test("transparent chambers have separate world depths and picking keeps the near
   close(focus.z, position[2]);
 });
 
-test("post effects follow only the selected GLB flower through extraction, reselection and the structure view", async () => {
+test("the post effect source tracks the selected GLB flower through extraction, reselection and the structure view", async () => {
   const array = new SpecimenArray(await source);
   const motion = settled();
   const post = new FlowerPostEffects();
@@ -670,9 +670,38 @@ test("flower post clock advances independently of a stationary inspector and red
   post.update(model, state, 1 / 60, true);
   assert.equal(post.uniforms.uTime.value, 0);
   assert.equal(post.uniforms.uFault.value, 0);
+  assert.equal(post.uniforms.uDistortion.value, 0);
   assert.equal(post.uniforms.uAge.value, 4);
   assert.ok(post.uniforms.uStrength.value > 0.99);
   assert.deepEqual(post.uniforms.uResolution.value.toArray(), [900, 700]);
+  post.dispose();
+});
+
+test("the image distortion rests between faults, responds to movement and respects reduced motion", async () => {
+  const array = new SpecimenArray(await source);
+  const motion = settled();
+  advance(motion, 2, () => array.sync(motion));
+  const post = new FlowerPostEffects();
+  const model = array.models.get(motion.selected);
+  const state = array.surfaces.get(motion.selected);
+  for (let i = 0; i < 150; i++) post.update(model, state, 1 / 60, false);
+  const quiet = post.uniforms.uDistortion.value;
+  assert.ok(quiet > 0 && quiet < 0.2);
+  for (let i = 0; i < 30; i++)
+    post.update(model, state, 1 / 60, false, [], false, 1);
+  assert.ok(post.uniforms.uDistortion.value > quiet * 3);
+  assert.ok(post.uniforms.uDistortion.value <= 1);
+  post.update(model, state, 1 / 60, true, [], false, 1);
+  assert.equal(post.uniforms.uFault.value, 0);
+  assert.equal(post.uniforms.uDistortion.value, 0);
+  assert.ok(post.uniforms.uStrength.value > 0.99);
+  const inspector = model.clone(true);
+  post.update(inspector, state, 1 / 60, false);
+  assert.ok(post.uniforms.uFault.value > 0.9);
+  assert.ok(post.uniforms.uAge.value < 0.02);
+  post.update(undefined, undefined, 1 / 60, false);
+  assert.equal(post.uniforms.uStrength.value, 0);
+  assert.equal(post.mask.flowers.size, 0);
   post.dispose();
 });
 
