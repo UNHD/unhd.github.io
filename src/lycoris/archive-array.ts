@@ -17,6 +17,8 @@ import {
 /** Array, extracted file and returning files share the exact GLB geometry. */
 export class SpecimenArray extends THREE.Group {
   readonly instances: THREE.InstancedMesh[] = [];
+  readonly distantInstances: THREE.InstancedMesh[] = [];
+  readonly distantCells: ArchiveCell[] = [];
   readonly shells: THREE.Mesh[] = [];
   readonly models = new Map<ArchiveCard, THREE.Group>();
   readonly surfaces = new Map<ArchiveCard, ArchiveSurface>();
@@ -28,6 +30,11 @@ export class SpecimenArray extends THREE.Group {
   private label?: (index: number) => THREE.Object3D;
   private appearance = new ArchiveAppearance();
   private lastTime = 0;
+  readonly renderedCells: ArchiveCell[] = [];
+  private frustum = new THREE.Frustum();
+  private viewProjection = new THREE.Matrix4();
+  private cellBounds = new THREE.Box3();
+  private distantKeys = new Set<string>();
 
   constructor(source: THREE.Group, label?: (index: number) => THREE.Object3D) {
     super();
@@ -72,6 +79,7 @@ export class SpecimenArray extends THREE.Group {
         }
       } else {
         const instanced = new THREE.InstancedMesh(geometry, material, count);
+        instanced.userData = { ...object.userData };
         instanced.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
         instanced.frustumCulled = false;
         this.instances.push(instanced);
@@ -88,7 +96,38 @@ export class SpecimenArray extends THREE.Group {
       }
   }
 
-  sync(motion: ArchiveMotion) {
+  /** Re-sampled source curves are used only for distant, frosted specimens. */
+  setDistantSource(source: THREE.Group) {
+    source.updateMatrixWorld(true);
+    const materialKey = (name: string) =>
+      name.split("__")[0].replace(/\.\d+$/, "");
+    source.traverse((mesh) => {
+      if (!(mesh instanceof THREE.Mesh) || Array.isArray(mesh.material)) return;
+      const original = this.instances.find(
+        (instance) =>
+          instance.userData.assemblyPart === mesh.userData.assemblyPart &&
+          materialKey((instance.material as THREE.Material).name) ===
+            materialKey((mesh.material as THREE.Material).name),
+      );
+      if (!original) return;
+      const geometry = mesh.geometry
+        .clone()
+        .applyMatrix4(mesh.matrixWorld)
+        .scale(MODEL_SCALE, MODEL_SCALE, MODEL_SCALE);
+      const instance = new THREE.InstancedMesh(
+        geometry,
+        original.material,
+        ARRAY_COLUMNS * ARRAY_ROWS,
+      );
+      instance.count = 0;
+      instance.frustumCulled = false;
+      instance.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      this.distantInstances.push(instance);
+      this.add(instance);
+    });
+  }
+
+  sync(motion: ArchiveMotion, camera?: THREE.Camera) {
     const dt = Math.min(0.05, Math.max(0, motion.time - this.lastTime));
     this.lastTime = motion.time;
     this.visible = motion.reveal > 0.001;
@@ -127,15 +166,50 @@ export class SpecimenArray extends THREE.Group {
     }
     const owned = new Set(cards.map((card) => cellKey(card.cell)));
     this.cells = motion.cells;
+    this.renderedCells.length = 0;
+    this.distantCells.length = 0;
+    const nextDistantKeys = new Set<string>();
+    const focus = motion.slotPosition(motion.selected.cell);
+    if (camera) {
+      camera.updateMatrixWorld();
+      this.viewProjection.multiplyMatrices(
+        camera.projectionMatrix,
+        camera.matrixWorldInverse,
+      );
+      this.frustum.setFromProjectionMatrix(this.viewProjection);
+    }
     this.cells.forEach((cell, i) => {
       const hidden = owned.has(cellKey(cell));
       this.dummy.position.set(...motion.slotPosition(cell));
-      this.dummy.scale.setScalar(hidden ? 0 : 1);
-      this.dummy.updateMatrix();
-      for (const instance of this.instances)
-        instance.setMatrixAt(i, this.dummy.matrix);
+      // Keep a generous refraction margin. Only completely off-screen chambers
+      // are omitted; visible flowers retain the original, full-detail geometry.
+      this.cellBounds.copy(this.bounds).translate(this.dummy.position);
+      this.cellBounds.expandByScalar(1);
+      const visible =
+        !hidden && (!camera || this.frustum.intersectsBox(this.cellBounds));
+      if (visible) {
+        const key = cellKey(cell);
+        const nearby =
+          Math.hypot(
+            this.dummy.position.x - focus[0],
+            this.dummy.position.z - focus[2],
+          ) < 6.5;
+        const distant =
+          this.distantInstances.length === this.instances.length &&
+          camera &&
+          !nearby &&
+          this.dummy.position.distanceTo(camera.position) >
+            (this.distantKeys.has(key) ? 24 : 28);
+        const cells = distant ? this.distantCells : this.renderedCells;
+        const instances = distant ? this.distantInstances : this.instances;
+        if (distant) nextDistantKeys.add(key);
+        this.dummy.updateMatrix();
+        for (const instance of instances)
+          instance.setMatrixAt(cells.length, this.dummy.matrix);
+        cells.push(cell);
+      }
       const shell = this.shells[i];
-      shell.visible = !hidden;
+      shell.visible = visible;
       shell.position.copy(this.dummy.position);
       shell.userData.archiveCell = cell;
       const anchor = this.arrayLabels[i];
@@ -146,18 +220,32 @@ export class SpecimenArray extends THREE.Group {
           anchor.add(this.label!(index));
           anchor.userData.record = index;
         }
-        anchor.visible = !hidden;
+        anchor.visible = visible;
         anchor.position.copy(this.dummy.position);
       }
     });
-    for (const instance of this.instances) {
-      instance.instanceMatrix.needsUpdate = true;
-      instance.boundingSphere = null;
-    }
+    this.distantKeys = nextDistantKeys;
+    for (const [instances, cells] of [
+      [this.instances, this.renderedCells],
+      [this.distantInstances, this.distantCells],
+    ] as const)
+      for (const instance of instances) {
+        instance.count = cells.length;
+        instance.instanceMatrix.clearUpdateRanges();
+        if (instance.count)
+          instance.instanceMatrix.addUpdateRange(0, instance.count * 16);
+        instance.instanceMatrix.needsUpdate = true;
+        instance.boundingSphere = null;
+      }
   }
 
   cellFromHit(hit: THREE.Intersection): ArchiveCell | undefined {
-    if (hit.instanceId !== undefined) return this.cells[hit.instanceId];
+    if (hit.instanceId !== undefined)
+      return (
+        this.distantInstances.includes(hit.object as THREE.InstancedMesh)
+          ? this.distantCells
+          : this.renderedCells
+      )[hit.instanceId];
     if (hit.object.userData.archiveCell) return hit.object.userData.archiveCell;
     let object: THREE.Object3D | null = hit.object;
     while (object && object !== this) {

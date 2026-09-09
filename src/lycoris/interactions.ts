@@ -6,26 +6,14 @@ import {
   toast,
   symbol,
   uiGlitch,
+  boot,
 } from "./app";
 import { records, categories, searchRecords, parts } from "./data";
 import archivedBuildProps from "../../public/Directory.Build.props?raw";
 import { TerminalAudio } from "../audio";
-import { BootSequence } from "./boot";
+import { prefs, readStored, type Preferences as Prefs } from "./preferences";
 
-type Prefs = { sound: boolean; reduced: boolean; quality: boolean };
-const fallbackPrefs: Prefs = {
-  sound: false,
-  reduced: matchMedia("(prefers-reduced-motion: reduce)").matches,
-  quality: true,
-};
-function read(key: string): unknown {
-  try {
-    return JSON.parse(localStorage.getItem(key) ?? "null");
-  } catch {
-    return null;
-  }
-}
-const storedSaved = read("lycoris.saved");
+const storedSaved = readStored("lycoris.saved");
 const saved = new Set<string>(
   Array.isArray(storedSaved)
     ? storedSaved.filter(
@@ -34,10 +22,6 @@ const saved = new Set<string>(
       )
     : [],
 );
-const storedPrefs = read("lycoris.preferences") as Partial<Prefs> | null;
-const prefs: Prefs = { ...fallbackPrefs };
-for (const key of Object.keys(prefs) as (keyof Prefs)[])
-  if (typeof storedPrefs?.[key] === "boolean") prefs[key] = storedPrefs[key]!;
 const audio = new TerminalAudio();
 let dialog: HTMLDialogElement | null = null;
 let detail = false;
@@ -47,7 +31,6 @@ let query = "";
 let categoryFilter = -1;
 let previousFocus: HTMLElement | null = null;
 let sceneParent: HTMLElement | null = null;
-let boot: BootSequence | undefined;
 const accessLog: { id: string; title: string; time: string }[] = [];
 let previewNodes: ChildNode[] = [];
 let lastWheel = 0;
@@ -350,8 +333,7 @@ function navigate(index?: number, direction?: number, lane = false) {
 function replay() {
   closeDialog();
   closeDetail();
-  boot?.dispose();
-  boot = new BootSequence(scene, prefs.reduced);
+  boot.dispose();
   boot.start();
 }
 
@@ -468,13 +450,7 @@ export function installInteractions() {
     }
   });
   window.addEventListener("keydown", (e) => {
-    if (boot?.running) {
-      if (["Escape", "Enter"].includes(e.key)) {
-        e.preventDefault();
-        boot.finish();
-      }
-      return;
-    }
+    if (boot.running) return;
     if (
       ["INPUT", "SELECT", "TEXTAREA"].includes(
         (e.target as HTMLElement).tagName,
@@ -539,8 +515,11 @@ export function installInteractions() {
   if (params.get("scene") === "detail") {
     preservePreview();
     openDetail();
-  } else if (params.get("scene") === "inspect") void openInspector();
-  else if (params.get("scene") !== "archive") replay();
+    scene.revealScene();
+  } else if (params.get("scene") === "inspect") {
+    scene.revealScene();
+    void openInspector();
+  } else if (params.get("scene") === "archive") scene.revealScene();
   registerWebMCP();
 }
 

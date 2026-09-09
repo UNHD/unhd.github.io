@@ -1,6 +1,45 @@
 export const OPENING_DURATION = 17.6;
 export const GARDEN_REVEAL_AT = 11.0;
 
+export type OpeningReadiness = "loading" | "ready" | "failed";
+
+/** Keep the veil in place until the model has produced a visible scene frame. */
+export class OpeningPlayback {
+  elapsed = 0;
+  ambientTime = 0;
+  private skipAt: number | null = null;
+  private revealed = false;
+
+  skip() {
+    this.skipAt ??= this.ambientTime;
+  }
+
+  advance(dt: number, readiness: OpeningReadiness, presented: boolean) {
+    this.ambientTime += dt;
+    const waiting =
+      readiness === "loading" ||
+      (readiness === "ready" && (!this.revealed || !presented));
+    this.elapsed = waiting
+      ? Math.min(this.elapsed + dt, GARDEN_REVEAL_AT)
+      : this.elapsed + dt;
+    const requestReveal =
+      !this.revealed &&
+      ((this.elapsed >= GARDEN_REVEAL_AT && readiness !== "loading") ||
+        this.skipAt !== null);
+    if (requestReveal) this.revealed = true;
+    const skip =
+      this.skipAt === null
+        ? 0
+        : openingEase(this.ambientTime - this.skipAt, 0, 0.65);
+    return {
+      time: this.elapsed,
+      skip,
+      requestReveal,
+      complete: this.elapsed >= OPENING_DURATION || skip === 1,
+    };
+  }
+}
+
 /** Quintic easing has no velocity or acceleration jump at either end. */
 export function openingEase(time: number, start: number, end: number) {
   const t = Math.max(0, Math.min(1, (time - start) / (end - start)));

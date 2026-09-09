@@ -105,6 +105,7 @@ uniform sampler2D tFlower;
 uniform sampler2D tFlowerDepth;
 uniform vec2 uResolution;
 uniform vec4 uBounds;
+uniform vec4 uMaskRect;
 uniform float uTime;
 uniform float uAge;
 uniform float uFault;
@@ -123,9 +124,10 @@ float signalNoise(vec2 p) {
     mix(signalHash(i + vec2(0.0, 1.0)), signalHash(i + vec2(1.0)), f.x), f.y);
 }
 float flowerCoverage(vec2 uv) {
-  if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) return 0.0;
-  float coverage = texture2D(tFlower, uv).r;
-  float flowerDepth = texture2D(tFlowerDepth, uv).r;
+  vec2 maskUV = (uv - uMaskRect.xy) / uMaskRect.zw;
+  if (any(lessThan(maskUV, vec2(0.0))) || any(greaterThan(maskUV, vec2(1.0)))) return 0.0;
+  float coverage = texture2D(tFlower, maskUV).r;
+  float flowerDepth = texture2D(tFlowerDepth, maskUV).r;
   float sceneDepth = texture2D(tSceneDepth, uv).r;
   // Reject flower pixels hidden by another specimen, the frame, or the floor.
   return coverage * (1.0 - step(0.000003, flowerDepth - sceneDepth));
@@ -187,6 +189,26 @@ void main() {
 }
 `;
 
+/** Crop only x/y clip coordinates: scene and mask depth must stay identical. */
+export function cropFlowerCamera(
+  source: THREE.Camera,
+  target: THREE.Camera,
+  rect: THREE.Vector4,
+) {
+  target.matrixAutoUpdate = false;
+  target.matrixWorldAutoUpdate = false;
+  target.matrixWorld.copy(source.matrixWorld);
+  target.matrixWorldInverse.copy(source.matrixWorldInverse);
+  target.projectionMatrix.makeScale(1 / rect.z, 1 / rect.w, 1);
+  target.projectionMatrix.setPosition(
+    (1 - 2 * rect.x - rect.z) / rect.z,
+    (1 - 2 * rect.y - rect.w) / rect.w,
+    0,
+  );
+  target.projectionMatrix.multiply(source.projectionMatrix);
+  target.projectionMatrixInverse.copy(target.projectionMatrix).invert();
+}
+
 /** Render the image once, then apply signals through the visible flower mask. */
 export class FlowerPostEffects {
   readonly mask = new FlowerMask();
@@ -197,6 +219,7 @@ export class FlowerPostEffects {
     tFlowerDepth: { value: null as THREE.Texture | null },
     uResolution: { value: new THREE.Vector2(1, 1) },
     uBounds: { value: new THREE.Vector4() },
+    uMaskRect: { value: new THREE.Vector4(0, 0, 1, 1) },
     uTime: { value: 0 },
     uAge: { value: 0 },
     uFault: { value: 0 },
@@ -223,6 +246,7 @@ export class FlowerPostEffects {
   private time = 0;
   private point = new THREE.Vector3();
   private clearColor = new THREE.Color();
+  private maskCamera = new THREE.Camera();
 
   constructor() {
     for (const target of [this.sceneTarget, this.maskTarget]) {
@@ -237,7 +261,12 @@ export class FlowerPostEffects {
 
   setSize(width: number, height: number) {
     this.sceneTarget.setSize(width, height);
-    this.maskTarget.setSize(width, height);
+    // Allocate the mask when the flower's projected size is known.
+    if (
+      width !== this.uniforms.uResolution.value.x ||
+      height !== this.uniforms.uResolution.value.y
+    )
+      this.maskTarget.setSize(1, 1);
     this.uniforms.uResolution.value.set(width, height);
   }
 
@@ -286,17 +315,52 @@ export class FlowerPostEffects {
       minY = Infinity,
       maxX = -Infinity,
       maxY = -Infinity;
+    let crossesCamera = false;
     camera.updateMatrixWorld();
     for (const x of [box.min.x, box.max.x])
       for (const y of [box.min.y, box.max.y])
         for (const z of [box.min.z, box.max.z]) {
-          this.point.set(x, y, z).project(camera);
+          this.point.set(x, y, z).applyMatrix4(camera.matrixWorldInverse);
+          crossesCamera ||= this.point.z >= -0.01;
+          this.point.applyMatrix4(camera.projectionMatrix);
           minX = Math.min(minX, this.point.x * 0.5 + 0.5);
           minY = Math.min(minY, this.point.y * 0.5 + 0.5);
           maxX = Math.max(maxX, this.point.x * 0.5 + 0.5);
           maxY = Math.max(maxY, this.point.y * 0.5 + 0.5);
         }
     this.uniforms.uBounds.value.set(minX, minY, maxX - minX, maxY - minY);
+    if (crossesCamera) {
+      minX = minY = 0;
+      maxX = maxY = 1;
+    }
+    const { x: width, y: height } = this.uniforms.uResolution.value;
+    // Include the 8px glitch displacement and multisample/filter footprints.
+    const left = Math.max(0, Math.floor(minX * width) - 10);
+    const bottom = Math.max(0, Math.floor(minY * height) - 10);
+    const right = Math.min(width, Math.ceil(maxX * width) + 10);
+    const top = Math.min(height, Math.ceil(maxY * height) + 10);
+    if (right <= left || top <= bottom) {
+      renderer.render(scene, camera);
+      return;
+    }
+    const wantedWidth = Math.min(width, Math.ceil((right - left) / 64) * 64);
+    const wantedHeight = Math.min(height, Math.ceil((top - bottom) / 64) * 64);
+    // Grow immediately; shrink only with a substantial size change so the
+    // breathing flower does not reallocate GPU attachments every few frames.
+    if (
+      wantedWidth > this.maskTarget.width ||
+      wantedHeight > this.maskTarget.height ||
+      wantedWidth < this.maskTarget.width / 2 ||
+      wantedHeight < this.maskTarget.height / 2
+    )
+      this.maskTarget.setSize(wantedWidth, wantedHeight);
+    this.uniforms.uMaskRect.value.set(
+      Math.min(left, width - this.maskTarget.width) / width,
+      Math.min(bottom, height - this.maskTarget.height) / height,
+      this.maskTarget.width / width,
+      this.maskTarget.height / height,
+    );
+    cropFlowerCamera(camera, this.maskCamera, this.uniforms.uMaskRect.value);
     const target = renderer.getRenderTarget();
     const alpha = renderer.getClearAlpha();
     renderer.getClearColor(this.clearColor);
@@ -304,7 +368,7 @@ export class FlowerPostEffects {
     renderer.render(scene, camera);
     renderer.setClearColor(0x000000, 0);
     renderer.setRenderTarget(this.maskTarget);
-    renderer.render(this.mask.scene, camera);
+    renderer.render(this.mask.scene, this.maskCamera);
     renderer.setClearColor(this.clearColor, alpha);
     renderer.setRenderTarget(target);
     this.quad.render(renderer);

@@ -225,6 +225,29 @@ export class ArchiveMotion {
     return "browsing";
   }
 
+  /** Ambient waves are excluded: reduced-motion mode has no travelling field. */
+  get transitioning() {
+    const springMoving = (spring: Spring, target: number) =>
+      Math.abs(spring.value - target) > 0.00001 ||
+      Math.abs(spring.velocity) > 0.00001;
+    return (
+      Math.abs(this.reveal - this.revealTarget) > 0.00001 ||
+      Math.abs(this.detail - (this.detailRequested ? 1 : 0)) > 0.00001 ||
+      springMoving(this.trackLane, this.selected.cell.lane) ||
+      springMoving(this.trackRow, this.selected.cell.row) ||
+      springMoving(
+        this.selected.lift,
+        this.detailRequested ? INSPECTION_LIFT : PREVIEW_LIFT * this.reveal,
+      ) ||
+      Math.abs(
+        this.selected.rotation -
+          (this.detailRequested ? this.rotationTarget : 0),
+      ) > 0.00001 ||
+      this.selected.returnY !== null ||
+      this.outgoing.length > 0
+    );
+  }
+
   step(dt: number) {
     this.time += dt;
     const blend = 1 - Math.exp(-dt * (this.reduced ? 35 : 3.2));

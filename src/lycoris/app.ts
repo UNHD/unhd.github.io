@@ -7,6 +7,8 @@ import { SpecimenScene } from "./scene";
 import { ArchiveSelection, categories, records } from "./data";
 import { ScrubTitle } from "../scrub-title";
 import { UiGlitch } from "./ui-glitch";
+import { BootSequence } from "./boot";
+import { prefs } from "./preferences";
 import flowerMark from "./flower-mark.svg?raw";
 
 const root = document.querySelector<HTMLDivElement>("#stage")!;
@@ -24,6 +26,19 @@ const number = createRollingNumber($("#record-number"), {
 });
 const title = new ScrubTitle($("#record-title"));
 export const uiGlitch = new UiGlitch(root);
+export const boot = new BootSequence(scene);
+scene.reduced = prefs.reduced;
+scene.setQuality(prefs.quality);
+uiGlitch.setReduced(prefs.reduced);
+document.body.classList.toggle("reduce-motion", prefs.reduced);
+// Mount the opening in the initial module, before either model downloads or
+// the optional interaction chunk can finish. Explicit scene links bypass it.
+if (
+  !["archive", "detail", "inspect"].includes(
+    new URLSearchParams(location.search).get("scene") ?? "",
+  )
+)
+  boot.start();
 let toastTimer: ReturnType<typeof setTimeout>;
 export function toast(message: string) {
   $("#toast").textContent = message;
@@ -99,7 +114,6 @@ scene.ready
   .then(() => {
     $("#model-status").textContent = "3D / CONNECTED";
     $("#model-loading").hidden = true;
-    if (!document.querySelector("#boot-sequence")) scene.revealScene();
   })
   .catch((error) => {
     $("#model-status").textContent = "MODEL UNAVAILABLE";

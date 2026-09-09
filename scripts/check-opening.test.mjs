@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import {
   OPENING_DURATION,
   GARDEN_REVEAL_AT,
+  OpeningPlayback,
   openingFrame,
   filamentProgress,
   SIGNAL_LINES,
@@ -11,6 +12,82 @@ import {
   signalLineFrame,
 } from "../src/lycoris/boot-timeline.ts";
 import { ArchiveMotion } from "../src/lycoris/archive-motion.ts";
+
+test("a cached model cannot reveal the garden before its cue or fade before its first frame", () => {
+  const playback = new OpeningPlayback();
+  let reveals = 0;
+  for (let i = 0; i < 1500; i++) {
+    const step = playback.advance(1 / 60, "ready", false);
+    if (step.requestReveal) {
+      reveals++;
+      assert.equal(step.time, GARDEN_REVEAL_AT);
+    }
+    assert.equal(openingFrame(step.time).ink, 1);
+    assert.equal(step.complete, false);
+  }
+  assert.equal(reveals, 1);
+  assert.equal(playback.elapsed, GARDEN_REVEAL_AT);
+  for (let i = 0; i < 420; i++) {
+    const step = playback.advance(1 / 60, "ready", true);
+    assert.equal(step.requestReveal, false);
+  }
+  assert.ok(playback.elapsed >= OPENING_DURATION);
+  assert.equal(openingFrame(playback.elapsed).ink, 0);
+});
+
+test("a slow primary model holds the title, then resumes without jumping the fade", () => {
+  const playback = new OpeningPlayback();
+  for (let i = 0; i < 1800; i++) {
+    const step = playback.advance(1 / 60, "loading", false);
+    assert.equal(step.requestReveal, false);
+    assert.equal(step.complete, false);
+  }
+  assert.equal(playback.elapsed, GARDEN_REVEAL_AT);
+  assert.equal(openingFrame(playback.elapsed).ink, 1);
+  assert.ok(openingFrame(playback.elapsed).title > 0.98);
+  const ready = playback.advance(1 / 60, "ready", false);
+  assert.equal(ready.requestReveal, true);
+  assert.equal(ready.time, GARDEN_REVEAL_AT);
+  const presented = playback.advance(1 / 60, "ready", true);
+  assert.ok(presented.time < GARDEN_REVEAL_AT + 0.02);
+  assert.equal(presented.complete, false);
+});
+
+test("a failed primary model releases the opening instead of waiting forever for a frame", () => {
+  const playback = new OpeningPlayback();
+  let step;
+  let reveals = 0;
+  for (let i = 0; i < 1080; i++) {
+    step = playback.advance(1 / 60, "failed", false);
+    if (step.requestReveal) reveals++;
+  }
+  assert.equal(reveals, 1);
+  assert.equal(step.complete, true);
+  assert.equal(openingFrame(step.time).ui, 1);
+});
+
+test("early skip still dissolves while the model loads and repeated skip cannot restart it", () => {
+  const playback = new OpeningPlayback();
+  playback.advance(0.1, "loading", false);
+  playback.skip();
+  let step = playback.advance(0.1, "loading", false);
+  assert.equal(step.requestReveal, true);
+  assert.ok(step.skip > 0 && step.skip < 1);
+  assert.equal(step.complete, false);
+  for (let i = 0; i < 6; i++) {
+    playback.skip();
+    step = playback.advance(0.1, "loading", false);
+    assert.equal(step.requestReveal, false);
+  }
+  assert.equal(step.complete, true);
+  assert.equal(step.skip, 1);
+  const replay = new OpeningPlayback();
+  const first = replay.advance(1 / 60, "ready", true);
+  assert.equal(first.requestReveal, false);
+  assert.equal(first.skip, 0);
+  assert.equal(first.complete, false);
+  assert.equal(openingFrame(first.time).phase, "signal");
+});
 
 test("opening fades overlap continuously and end with the live garden and complete interface", () => {
   const channels = (frame) => [

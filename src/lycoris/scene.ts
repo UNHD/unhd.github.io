@@ -22,7 +22,16 @@ export class SpecimenScene {
   readonly ready: Promise<void>;
   readonly motion = new ArchiveMotion();
   mode: SceneMode = "archive";
-  reduced = false;
+  private reducedMotion = false;
+  get reduced() {
+    return this.reducedMotion;
+  }
+  set reduced(value: boolean) {
+    if (this.reducedMotion !== value) {
+      this.reducedMotion = value;
+      this.invalidate();
+    }
+  }
   autorotate = false;
   onSelect?: (index: number, cell: ArchiveCell) => void;
   onOpen?: () => void;
@@ -51,6 +60,17 @@ export class SpecimenScene {
   private cameraAim = new THREE.Vector3(0, -0.4, -1);
   private temp = new THREE.Vector3();
   private resizeObserver: ResizeObserver;
+  private intersectionObserver: IntersectionObserver;
+  private inViewport = true;
+  private disposed = false;
+  private presented = false;
+  get hasPresentedScene() {
+    return this.presented;
+  }
+  private needsRender = true;
+  private invalidate = () => {
+    this.needsRender = true;
+  };
   private ground = new THREE.Group();
   private ring: THREE.LineLoop;
   private labelMaterial: THREE.MeshBasicMaterial;
@@ -72,6 +92,7 @@ export class SpecimenScene {
       powerPreference: "high-performance",
     });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
+    this.renderer.transmissionResolutionScale = 0.75;
     this.renderer.setClearColor(0x090d10, 0);
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.25;
@@ -108,6 +129,7 @@ export class SpecimenScene {
     this.controls.maxPolarAngle = Math.PI * 0.92;
     this.controls.enabled = false;
     this.controls.enablePan = false;
+    this.controls.addEventListener("change", this.invalidate);
 
     const floor = new THREE.Mesh(
       new THREE.PlaneGeometry(160, 160),
@@ -147,6 +169,15 @@ export class SpecimenScene {
     this.scene.add(this.inspector);
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(host);
+    this.intersectionObserver = new IntersectionObserver(
+      ([entry]) => {
+        this.inViewport = entry.isIntersecting;
+        if (this.inViewport) this.invalidate();
+      },
+      { rootMargin: "64px" },
+    );
+    this.intersectionObserver.observe(host);
+    document.addEventListener("visibilitychange", this.invalidate);
     this.bindPointer();
     this.ready = this.load();
     this.renderer.setAnimationLoop(() => this.frame());
@@ -191,9 +222,14 @@ export class SpecimenScene {
   }
 
   private async load() {
-    const gltf = await new GLTFLoader().loadAsync(
+    const loader = new GLTFLoader();
+    const gltf = await loader.loadAsync(
       `${import.meta.env.BASE_URL}assets/lycoris-specimen.glb?v=photo-study-04`,
     );
+    if (this.disposed) {
+      this.disposeSource(gltf.scene);
+      return;
+    }
     gltf.scene.traverse((object) => {
       if (!(object instanceof THREE.Mesh)) return;
       const materials = Array.isArray(object.material)
@@ -254,6 +290,34 @@ export class SpecimenScene {
     this.archive.sync(this.motion);
     this.resize();
     this.onReady?.();
+    // The full model is already usable. Optional distant geometry must never
+    // delay the opening, even if this request is slow or unavailable.
+    void this.loadDistant(loader);
+  }
+
+  private async loadDistant(loader: GLTFLoader) {
+    const distant = await loader
+      .loadAsync(
+        `${import.meta.env.BASE_URL}assets/lycoris-distant.glb?v=photo-study-04-lod1`,
+      )
+      .catch(() => undefined);
+    if (!distant) return;
+    if (!this.disposed) {
+      this.archive!.setDistantSource(distant.scene);
+      this.invalidate();
+    }
+    this.disposeSource(distant.scene);
+  }
+
+  private disposeSource(source: THREE.Object3D) {
+    source.traverse((mesh) => {
+      if (!(mesh instanceof THREE.Mesh)) return;
+      mesh.geometry.dispose();
+      for (const material of Array.isArray(mesh.material)
+        ? mesh.material
+        : [mesh.material])
+        material.dispose();
+    });
   }
 
   private bindPointer() {
@@ -266,9 +330,11 @@ export class SpecimenScene {
       if (this.dragging) canvas.setPointerCapture(event.pointerId);
     });
     canvas.addEventListener("pointermove", (event) => {
-      if (this.dragging && event.buttons === 1 && this.motion.canRotate)
+      if (this.dragging && event.buttons === 1 && this.motion.canRotate) {
         this.motion.rotationTarget +=
           (event.clientX - this.lastPointerX) * 0.008;
+        this.invalidate();
+      }
       this.lastPointerX = event.clientX;
     });
     canvas.addEventListener("pointerup", (event) => {
@@ -315,6 +381,7 @@ export class SpecimenScene {
   }
 
   resize() {
+    this.invalidate();
     const width = this.host.clientWidth,
       height = this.host.clientHeight;
     if (!width || !height) return;
@@ -327,9 +394,12 @@ export class SpecimenScene {
   }
   revealScene() {
     this.motion.revealScene();
+    this.invalidate();
   }
   hideScene() {
+    this.presented = false;
     this.motion.revealTarget = 0;
+    this.invalidate();
   }
   /** Opening linework meets the actual selected flower in viewport coordinates. */
   flowerScreenAnchor() {
@@ -371,10 +441,12 @@ export class SpecimenScene {
   select(index: number, lane: number, row: number) {
     this.motion.select({ lane, row });
     this.tintInspector(index);
+    this.invalidate();
   }
 
   setMode(mode: SceneMode) {
     if (this.mode === mode) return;
+    this.invalidate();
     if (mode === "inspect") {
       this.tintInspector(this.motion.selected.index);
       // The independent structure view leaves the archive's extraction frozen.
@@ -415,6 +487,7 @@ export class SpecimenScene {
       this.archive.visible = mode !== "inspect" && this.motion.reveal > 0.001;
   }
   setExploded(ids: string[]) {
+    this.invalidate();
     this.exploded = new Set(ids);
     if (this.mode === "inspect" && ids.length) this.fitInspector();
   }
@@ -446,10 +519,12 @@ export class SpecimenScene {
     return [...this.exploded];
   }
   rotate(amount: number) {
+    this.invalidate();
     if (this.mode === "inspect") this.inspectorTarget += amount;
     else if (this.motion.canRotate) this.motion.rotationTarget += amount;
   }
   resetView() {
+    this.invalidate();
     if (this.mode !== "inspect") {
       this.motion.rotationTarget = 0;
       return;
@@ -464,6 +539,7 @@ export class SpecimenScene {
     this.fitInspector();
   }
   zoom(direction: number) {
+    this.invalidate();
     this.temp
       .copy(this.camera.position)
       .sub(this.controls.target)
@@ -473,6 +549,7 @@ export class SpecimenScene {
     this.controls.update();
   }
   pan(x: number, y: number) {
+    this.invalidate();
     const right = new THREE.Vector3()
       .setFromMatrixColumn(this.camera.matrix, 0)
       .multiplyScalar(x * 0.18);
@@ -486,21 +563,34 @@ export class SpecimenScene {
   }
   setQuality(high: boolean) {
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, high ? 1.75 : 1));
+    this.renderer.transmissionResolutionScale = high ? 0.75 : 0.5;
     this.resize();
   }
 
   private frame() {
     const dt = Math.min(this.clock.getDelta(), 0.05);
-    if (document.hidden || !this.archive) return;
+    if (document.hidden || !this.inViewport || !this.archive) return;
+    if (!this.needsRender) {
+      if (
+        this.reduced &&
+        (this.mode === "inspect" || !this.motion.transitioning)
+      )
+        return;
+      if (
+        this.mode !== "inspect" &&
+        this.motion.revealTarget === 0 &&
+        this.motion.reveal < 0.001
+      )
+        return;
+    }
+    this.needsRender = false;
     this.motion.reduced = this.reduced;
     if (this.mode === "inspect") {
       this.archive.visible = false;
       if (this.autorotate && !this.reduced) this.inspectorTarget += dt * 0.17;
-      this.inspectorRotation = approach(
-        this.inspectorRotation,
-        this.inspectorTarget,
-        dt,
-      );
+      this.inspectorRotation = this.reduced
+        ? this.inspectorTarget
+        : approach(this.inspectorRotation, this.inspectorTarget, dt);
       this.inspector.rotation.y = this.inspectorRotation;
       for (const item of this.partMeshes) {
         const target = this.exploded.has(item.part) ? 1 : 0;
@@ -521,22 +611,22 @@ export class SpecimenScene {
       if (this.autorotate && !this.reduced && this.motion.canRotate)
         this.motion.rotationTarget += dt * 0.22;
       this.motion.step(dt);
-      this.archive.sync(this.motion);
       this.updateArchiveCamera(dt);
+      this.archive.sync(this.motion, this.camera);
       this.ring.visible = this.motion.reveal > 0.05;
       this.ring.position.set(
         ...this.motion.slotPosition(this.motion.selected.cell),
       );
       this.ring.position.y += this.archive.bounds.min.y - 0.02;
       const phase = this.motion.phase;
-      this.host.dataset.inspection = phase;
-      this.host.dataset.motion = this.reduced ? "reduced" : "full";
-      this.renderer.domElement.style.cursor = this.motion.canRotate
-        ? "grab"
-        : "pointer";
       const phaseKey = phase + ":" + this.reduced;
       if (phaseKey !== this.lastPhase) {
         this.lastPhase = phaseKey;
+        this.host.dataset.inspection = phase;
+        this.host.dataset.motion = this.reduced ? "reduced" : "full";
+        this.renderer.domElement.style.cursor = this.motion.canRotate
+          ? "grab"
+          : "pointer";
         this.onPhaseChange?.(phase);
       }
     }
@@ -565,6 +655,8 @@ export class SpecimenScene {
       records[this.motion.selected.index]?.flowerColor === "cyan",
     );
     this.flowerPost.render(this.renderer, this.scene, this.camera);
+    if (this.motion.revealTarget > 0 && this.archive.visible)
+      this.presented = true;
   }
 
   private updateArchiveCamera(dt: number) {
@@ -577,9 +669,12 @@ export class SpecimenScene {
   }
 
   dispose() {
+    this.disposed = true;
     this.renderer.setAnimationLoop(null);
     this.controls.dispose();
     this.resizeObserver.disconnect();
+    this.intersectionObserver.disconnect();
+    document.removeEventListener("visibilitychange", this.invalidate);
     this.labelMaterial.map?.dispose();
     this.labelMaterial.dispose();
     for (const geometry of this.labelGeometries) geometry.dispose();

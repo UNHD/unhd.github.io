@@ -3,8 +3,8 @@ import flowerSvg from "./opening-flower.svg?raw";
 import flowerMark from "./flower-mark.svg?raw";
 import {
   filamentProgress,
-  GARDEN_REVEAL_AT,
-  OPENING_DURATION,
+  OpeningPlayback,
+  type OpeningReadiness,
   openingEase,
   openingFrame,
   SIGNAL_LINES,
@@ -18,6 +18,7 @@ type Trace = {
   delay: number;
   samples: { x: number; y: number }[];
   tip: SVGCircleElement;
+  complete: boolean;
 };
 
 /** Reuse the photo-study curves as a quiet, layered field behind the title. */
@@ -57,34 +58,30 @@ export class BootSequence {
   private element?: HTMLElement;
   private root = document.querySelector<HTMLElement>("#stage")!;
   private traces: Trace[] = [];
-  private petals: { path: SVGPathElement; delay: number }[] = [];
+  private petals: { path: SVGPathElement; delay: number; complete: boolean }[] =
+    [];
   private captions: HTMLElement[] = [];
   private signals: { line: HTMLElement; text: HTMLElement }[] = [];
   private signalTick = -1;
+  private signalsComplete = false;
   private frame = 0;
-  private elapsed = 0;
-  private ambientTime = 0;
+  private playback = new OpeningPlayback();
   private lastTime = 0;
-  private skipAt: number | null = null;
-  private ready = false;
-  private revealed = false;
+  private readiness: OpeningReadiness = "loading";
   private previousFocus: HTMLElement | null = null;
 
-  constructor(
-    private scene: SpecimenScene,
-    private reduced: boolean,
-  ) {}
+  constructor(private scene: SpecimenScene) {}
 
   start() {
     if (this.running) return;
-    if (this.reduced) {
+    if (this.scene.reduced) {
       this.scene.revealScene();
       return;
     }
-    this.elapsed = this.ambientTime = 0;
+    this.playback = new OpeningPlayback();
     this.signalTick = -1;
-    this.skipAt = null;
-    this.ready = this.revealed = false;
+    this.signalsComplete = false;
+    this.readiness = "loading";
     this.previousFocus = document.activeElement as HTMLElement;
     this.running = true;
     this.scene.hideScene();
@@ -114,6 +111,8 @@ export class BootSequence {
     document.body.appendChild(this.element);
     this.root.inert = true;
     this.root.dataset.opening = "true";
+    // A restored scroll position must not leave the renderer outside its viewport.
+    this.root.scrollIntoView({ block: "start", behavior: "instant" });
     const tips = this.element.querySelector(".bloom-trace-tips")!;
     this.traces = Array.from(
       this.element.querySelectorAll<SVGPathElement>(".bloom-filament"),
@@ -128,6 +127,7 @@ export class BootSequence {
       return {
         path,
         tip,
+        complete: false,
         delay: Number(path.dataset.delay),
         samples: Array.from({ length: 65 }, (_, i) => {
           const point = path.getPointAtLength((length * i) / 64);
@@ -137,7 +137,11 @@ export class BootSequence {
     });
     this.petals = Array.from(
       this.element.querySelectorAll<SVGPathElement>(".bloom-petal"),
-    ).map((path) => ({ path, delay: Number(path.dataset.delay) }));
+    ).map((path) => ({
+      path,
+      delay: Number(path.dataset.delay),
+      complete: false,
+    }));
     this.captions = Array.from(
       this.element.querySelectorAll<HTMLElement>(".bloom-captions p"),
     );
@@ -149,13 +153,14 @@ export class BootSequence {
     skip.focus({ preventScroll: true });
     void this.scene.ready.then(
       () => {
-        this.ready = true;
+        this.readiness = "ready";
       },
       () => {
-        this.ready = true;
+        this.readiness = "failed";
       },
     );
     document.addEventListener("visibilitychange", this.onVisibility);
+    window.addEventListener("keydown", this.onKeyDown);
     this.lastTime = performance.now();
     this.update();
   }
@@ -165,24 +170,15 @@ export class BootSequence {
     const now = performance.now();
     const dt = Math.min((now - this.lastTime) / 1000, 0.1);
     this.lastTime = now;
-    this.ambientTime += dt;
-    this.elapsed =
-      !this.ready && this.elapsed + dt > GARDEN_REVEAL_AT
-        ? GARDEN_REVEAL_AT
-        : this.elapsed + dt;
-    const t = this.elapsed;
+    const playback = this.playback.advance(
+      dt,
+      this.readiness,
+      this.scene.hasPresentedScene,
+    );
+    const t = playback.time;
     const state = openingFrame(t);
-    const skip =
-      this.skipAt === null
-        ? 0
-        : openingEase(this.ambientTime - this.skipAt, 0, 0.65);
-    if (
-      !this.revealed &&
-      ((t >= GARDEN_REVEAL_AT && this.ready) || this.skipAt !== null)
-    ) {
-      this.revealed = true;
-      this.scene.revealScene();
-    }
+    const skip = playback.skip;
+    if (playback.requestReveal) this.scene.revealScene();
     const style = this.element.style;
     style.setProperty("--bloom-heart", String(state.heart));
     style.setProperty("--bloom-ink", String(state.ink * (1 - skip)));
@@ -199,7 +195,7 @@ export class BootSequence {
     style.setProperty("--bloom-progress", String(state.progress));
     style.setProperty(
       "--bloom-breath",
-      String((1 + Math.sin(this.ambientTime * 1.7 - 1.1)) / 2),
+      String((1 + Math.sin(this.playback.ambientTime * 1.7 - 1.1)) / 2),
     );
     this.root.style.setProperty(
       "--opening-ui",
@@ -220,23 +216,27 @@ export class BootSequence {
       caption.style.filter = `blur(${(1 - opacity) * 4}px)`;
     });
     const tick = Math.floor(t * 13);
-    this.signals.forEach(({ line, text }, i) => {
-      const state = signalLineFrame(t, i);
-      const fault = t < 4.0 && (tick + i * 7) % 23 === 0 ? (i % 2 ? 1 : -1) : 0;
-      line.style.opacity = String(state.opacity);
-      line.style.transform = `translate(${fault * 2}px, ${(1 - state.reveal) * 9 + (i - 4) * state.dissolve * 7}px)`;
-      line.style.filter = `blur(${(1 - state.reveal) * 3 + state.dissolve * 4}px)`;
-      line.style.setProperty("--signal-fault", String(fault));
-      if (tick !== this.signalTick && t < 6.2) {
-        const value = openingSignalText(SIGNAL_LINES[i], t, i);
-        if (text.textContent !== value) {
-          text.textContent = value;
-          text.dataset.echo = value;
+    if (!this.signalsComplete)
+      this.signals.forEach(({ line, text }, i) => {
+        const state = signalLineFrame(t, i);
+        const fault =
+          t < 4.0 && (tick + i * 7) % 23 === 0 ? (i % 2 ? 1 : -1) : 0;
+        line.style.opacity = String(state.opacity);
+        line.style.transform = `translate(${fault * 2}px, ${(1 - state.reveal) * 9 + (i - 4) * state.dissolve * 7}px)`;
+        line.style.filter = `blur(${(1 - state.reveal) * 3 + state.dissolve * 4}px)`;
+        line.style.setProperty("--signal-fault", String(fault));
+        if (tick !== this.signalTick && t < 6.2) {
+          const value = openingSignalText(SIGNAL_LINES[i], t, i);
+          if (text.textContent !== value) {
+            text.textContent = value;
+            text.dataset.echo = value;
+          }
         }
-      }
-    });
+      });
+    if (t >= 6.2) this.signalsComplete = true;
     this.signalTick = tick;
     for (const trace of this.traces) {
+      if (trace.complete) continue;
       const p = filamentProgress(t, trace.delay);
       trace.path.style.strokeDashoffset = String(1 - p);
       const index = Math.min(63, Math.floor(p * 64));
@@ -248,17 +248,25 @@ export class BootSequence {
       trace.tip.style.opacity = String(
         openingEase(p, 0, 0.08) * (1 - openingEase(p, 0.8, 1)) * 0.75,
       );
+      trace.complete = p === 1;
     }
     for (const petal of this.petals) {
-      petal.path.style.strokeDashoffset = String(
-        1 - openingEase(t, 4.9 + petal.delay * 0.5, 7.05 + petal.delay * 0.5),
+      if (petal.complete) continue;
+      const stroke = openingEase(
+        t,
+        4.9 + petal.delay * 0.5,
+        7.05 + petal.delay * 0.5,
       );
-      petal.path.style.fillOpacity = String(
-        openingEase(t, 6.0 + petal.delay * 0.5, 8.25 + petal.delay * 0.5) *
-          0.38,
+      const fill = openingEase(
+        t,
+        6.0 + petal.delay * 0.5,
+        8.25 + petal.delay * 0.5,
       );
+      petal.path.style.strokeDashoffset = String(1 - stroke);
+      petal.path.style.fillOpacity = String(fill * 0.38);
+      petal.complete = stroke === 1 && fill === 1;
     }
-    if (t >= OPENING_DURATION || skip === 1) {
+    if (playback.complete) {
       this.complete();
       return;
     }
@@ -271,15 +279,23 @@ export class BootSequence {
     if (!document.hidden && this.running) this.update();
   };
 
+  private onKeyDown = (event: KeyboardEvent) => {
+    if (this.running && (event.key === "Enter" || event.key === "Escape")) {
+      event.preventDefault();
+      if (!event.repeat) this.finish();
+    }
+  };
+
   /** Explicit skip still dissolves into the live garden. */
   finish() {
-    if (this.running && this.skipAt === null) this.skipAt = this.ambientTime;
+    if (this.running) this.playback.skip();
   }
 
   private complete() {
     this.running = false;
     cancelAnimationFrame(this.frame);
     document.removeEventListener("visibilitychange", this.onVisibility);
+    window.removeEventListener("keydown", this.onKeyDown);
     this.scene.revealScene();
     this.root.inert = false;
     delete this.root.dataset.opening;

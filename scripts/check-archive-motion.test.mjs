@@ -1,7 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { Box3, Matrix4, Vector3, PerspectiveCamera, Raycaster } from "three";
+import {
+  Box3,
+  Camera,
+  Frustum,
+  Matrix4,
+  Vector3,
+  Vector4,
+  PerspectiveCamera,
+  Raycaster,
+} from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import {
   ArchiveSelection,
@@ -20,7 +29,10 @@ import {
   ARRAY_ROWS,
 } from "../src/lycoris/archive-motion.ts";
 import { SpecimenArray } from "../src/lycoris/archive-array.ts";
-import { FlowerPostEffects } from "../src/lycoris/flower-post.ts";
+import {
+  FlowerPostEffects,
+  cropFlowerCamera,
+} from "../src/lycoris/flower-post.ts";
 import { updateArchiveCamera } from "../src/lycoris/archive-camera.ts";
 import { fitInspectorBounds } from "../src/lycoris/inspector-framing.ts";
 import {
@@ -231,9 +243,21 @@ test("the production GLB array owns exactly one visible copy of each selected an
     const owned = new Set(
       [motion.selected, ...motion.outgoing].map((c) => cellKey(c.cell)),
     );
-    array.cells.forEach((cell, i) => {
+    const rendered = new Set(array.renderedCells.map(cellKey));
+    assert.equal(rendered.size, array.instances[0].count);
+    array.renderedCells.forEach((cell, i) => {
       array.instances[0].getMatrixAt(i, matrix);
-      const visible = Math.abs(matrix.determinant()) > 0.5;
+      close(
+        new Vector3()
+          .setFromMatrixPosition(matrix)
+          .distanceTo(new Vector3(...motion.slotPosition(cell))),
+        0,
+        0.00001,
+      );
+      assert.deepEqual(array.cellFromHit({ instanceId: i }), cell);
+    });
+    array.cells.forEach((cell, i) => {
+      const visible = rendered.has(cellKey(cell));
       assert.equal(visible, !owned.has(cellKey(cell)));
       assert.equal(
         array.shells[i].visible,
@@ -306,7 +330,7 @@ test("idle rows keep visibly undulating after entrance and without further input
   advance(motion, 6, (dt) => {
     array.sync(motion);
     updateArchiveCamera(camera, aim, motion, dt);
-    const i = array.cells.findIndex(
+    const i = array.renderedCells.findIndex(
       (cell) => cell.lane === 0 && cell.row === 1,
     );
     array.instances[0].getMatrixAt(i, matrix);
@@ -465,6 +489,170 @@ test("post effects follow only the selected GLB flower through extraction, resel
   assert.equal(post.mask.flowers.size, 0);
   assert.equal(post.mask.scene.children.length, 0);
   post.dispose();
+});
+
+test("frustum compaction retains every visible full-detail flower through camera and selection transitions", async () => {
+  const array = new SpecimenArray(await source);
+  const motion = settled();
+  const camera = new PerspectiveCamera(34, 1.6, 0.1, 150);
+  const aim = new Vector3(0, -0.4, -1);
+  const frustum = new Frustum();
+  const box = new Box3();
+  let minimumCount = 63;
+  for (const aspect of [1.6, 0.6]) {
+    camera.aspect = aspect;
+    camera.updateProjectionMatrix();
+    motion.select({ lane: 3, row: -4 });
+    motion.setDetail(aspect === 0.6);
+    advance(motion, 4, (dt) => {
+      updateArchiveCamera(camera, aim, motion, dt);
+      array.sync(motion, camera);
+      minimumCount = Math.min(minimumCount, array.instances[0].count);
+      frustum.setFromProjectionMatrix(
+        new Matrix4().multiplyMatrices(
+          camera.projectionMatrix,
+          camera.matrixWorldInverse,
+        ),
+      );
+      const owned = new Set(
+        [motion.selected, ...motion.outgoing].map((card) => cellKey(card.cell)),
+      );
+      const rendered = new Set(array.renderedCells.map(cellKey));
+      for (const cell of motion.cells) {
+        if (owned.has(cellKey(cell))) {
+          assert.ok(!rendered.has(cellKey(cell)));
+          continue;
+        }
+        box
+          .copy(array.bounds)
+          .translate(new Vector3(...motion.slotPosition(cell)));
+        if (frustum.intersectsBox(box))
+          assert.ok(rendered.has(cellKey(cell)), "a visible flower was culled");
+      }
+      array.renderedCells.forEach((cell, i) =>
+        assert.deepEqual(array.cellFromHit({ instanceId: i }), cell),
+      );
+    });
+  }
+  assert.ok(minimumCount < 40, "off-screen geometry is still submitted");
+});
+
+test("cropped flower mask preserves screen pixel correspondence and scene depth", () => {
+  const camera = new PerspectiveCamera(34, 1.6, 0.1, 150);
+  camera.position.set(-16, 14, 14);
+  camera.lookAt(0, -0.4, -1);
+  camera.updateMatrixWorld();
+  const maskCamera = new Camera();
+  for (const rect of [
+    new Vector4(0, 0, 1, 1),
+    new Vector4(0.25, 0.15, 0.3, 0.5),
+    new Vector4(0.8, 0.6, 0.2, 0.4),
+  ]) {
+    cropFlowerCamera(camera, maskCamera, rect);
+    maskCamera.updateMatrixWorld();
+    for (const point of [
+      new Vector3(0, 1, 0),
+      new Vector3(2, -1, -2),
+      new Vector3(-3, 4, 5),
+    ]) {
+      const main = point.clone().project(camera);
+      const mask = point.clone().project(maskCamera);
+      close((mask.x + 1) / 2, ((main.x + 1) / 2 - rect.x) / rect.z);
+      close((mask.y + 1) / 2, ((main.y + 1) / 2 - rect.y) / rect.w);
+      close(mask.z, main.z, 1e-10);
+    }
+  }
+});
+
+test("distant source curves preserve specimen bounds and keep selected and nearby flowers at full detail", async () => {
+  const bytes = await readFile(
+    new URL("../public/assets/lycoris-distant.glb", import.meta.url),
+  );
+  const distant = await new GLTFLoader().parseAsync(
+    bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+    "",
+  );
+  const array = new SpecimenArray(await source);
+  array.setDistantSource(distant.scene);
+  assert.equal(array.distantInstances.length, array.instances.length);
+  const triangles = (instances) =>
+    instances.reduce((sum, mesh) => sum + mesh.geometry.index.count / 3, 0);
+  assert.ok(
+    triangles(array.distantInstances) < triangles(array.instances) * 0.6,
+  );
+  array.distantInstances.forEach((mesh, i) => {
+    mesh.geometry.computeBoundingBox();
+    const original = array.instances[i];
+    original.geometry.computeBoundingBox();
+    assert.ok(
+      mesh.geometry.boundingBox.min.distanceTo(
+        original.geometry.boundingBox.min,
+      ) < 0.04,
+    );
+    assert.ok(
+      mesh.geometry.boundingBox.max.distanceTo(
+        original.geometry.boundingBox.max,
+      ) < 0.04,
+    );
+  });
+  const motion = settled();
+  const camera = new PerspectiveCamera(34, 1.6, 0.1, 150);
+  const aim = new Vector3();
+  updateArchiveCamera(camera, aim, motion, 10);
+  array.sync(motion, camera);
+  assert.ok(array.distantCells.length > 0);
+  assert.ok(array.renderedCells.length > 0);
+  const selectedFar = { ...array.distantCells[0] };
+  motion.select(selectedFar);
+  motion.setDetail(true);
+  advance(motion, 5, (dt) => {
+    updateArchiveCamera(camera, aim, motion, dt);
+    array.sync(motion, camera);
+    const focus = motion.slotPosition(motion.selected.cell);
+    for (const cell of array.distantCells) {
+      const position = new Vector3(...motion.slotPosition(cell));
+      assert.ok(position.distanceTo(camera.position) > 24);
+      assert.ok(
+        Math.hypot(position.x - focus[0], position.z - focus[2]) >= 6.5,
+      );
+    }
+    const keys = [...array.renderedCells, ...array.distantCells].map(cellKey);
+    assert.equal(new Set(keys).size, keys.length);
+    assert.ok(!keys.includes(cellKey(motion.selected.cell)));
+    array.distantCells.forEach((cell, i) =>
+      assert.deepEqual(
+        array.cellFromHit({ object: array.distantInstances[0], instanceId: i }),
+        cell,
+      ),
+    );
+  });
+  const selected = array.models.get(motion.selected);
+  for (const mesh of array.instances)
+    assert.ok(
+      selected.children.some((part) => part.geometry === mesh.geometry),
+    );
+});
+
+test("reduced-motion rendering can rest and wakes for selection, extraction, rotation and return", () => {
+  const motion = new ArchiveMotion();
+  motion.reduced = true;
+  for (const action of [
+    () => motion.revealScene(),
+    () => motion.select({ lane: 2, row: 3 }),
+    () => motion.setDetail(true),
+    () => {
+      motion.rotationTarget = 1.2;
+    },
+    () => motion.setDetail(false),
+  ]) {
+    action();
+    assert.ok(motion.transitioning);
+    advance(motion, 2);
+    assert.ok(
+      !motion.transitioning,
+      "a settled reduced-motion scene keeps drawing",
+    );
+  }
 });
 
 test("flower post clock advances independently of a stationary inspector and reduced motion preserves a static selected signal", async () => {
