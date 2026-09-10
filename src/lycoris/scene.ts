@@ -9,6 +9,7 @@ import { updateArchiveCamera } from "./archive-camera";
 import { FlowerPostEffects } from "./flower-post";
 import { applyCyanFlower } from "./specimen-color";
 import { fitInspectorBounds } from "./inspector-framing";
+import { withDistanceFog } from "./distance-fog";
 
 export type SceneMode = "archive" | "detail" | "inspect";
 const approach = (a: number, b: number, dt: number, speed = 5) =>
@@ -133,15 +134,18 @@ export class SpecimenScene {
 
     const floor = new THREE.Mesh(
       new THREE.PlaneGeometry(160, 160),
-      new THREE.MeshStandardMaterial({
-        color: 0x0a1014,
-        roughness: 0.82,
-        metalness: 0.25,
-      }),
+      withDistanceFog(
+        new THREE.MeshStandardMaterial({
+          color: 0x0a1014,
+          roughness: 0.82,
+          metalness: 0.25,
+        }),
+      ),
     );
     floor.rotation.x = -Math.PI / 2;
     floor.position.y = -5.45;
     const grid = new THREE.GridHelper(120, 60, 0x283034, 0x172126);
+    withDistanceFog(grid.material);
     grid.position.y = -5.43;
     this.ground.add(floor, grid);
     this.scene.add(this.ground);
@@ -157,11 +161,13 @@ export class SpecimenScene {
             ),
         ),
       ),
-      new THREE.LineBasicMaterial({
-        color: 0xdb5c51,
-        transparent: true,
-        opacity: 0.65,
-      }),
+      withDistanceFog(
+        new THREE.LineBasicMaterial({
+          color: 0xdb5c51,
+          transparent: true,
+          opacity: 0.65,
+        }),
+      ),
     );
     this.scene.add(this.ring);
     this.labelMaterial = this.createLabels();
@@ -214,11 +220,13 @@ export class SpecimenScene {
     const texture = new THREE.CanvasTexture(canvas);
     texture.colorSpace = THREE.SRGBColorSpace;
     texture.anisotropy = this.renderer.capabilities.getMaxAnisotropy();
-    return new THREE.MeshBasicMaterial({
-      map: texture,
-      side: THREE.DoubleSide,
-      toneMapped: false,
-    });
+    return withDistanceFog(
+      new THREE.MeshBasicMaterial({
+        map: texture,
+        side: THREE.DoubleSide,
+        toneMapped: false,
+      }),
+    );
   }
 
   private async load() {
@@ -268,7 +276,7 @@ export class SpecimenScene {
     gltf.scene.traverse((object) => {
       if (!(object instanceof THREE.Mesh)) return;
       const cloneMaterial = (source: THREE.MeshStandardMaterial) => {
-        const material = source.clone();
+        const material = withDistanceFog(source.clone());
         this.inspectorMaterials.push({
           material,
           originalColor: material.color.clone(),
@@ -612,7 +620,7 @@ export class SpecimenScene {
         this.motion.rotationTarget += dt * 0.22;
       this.motion.step(dt);
       this.updateArchiveCamera(dt);
-      this.archive.sync(this.motion, this.camera);
+      this.archive.sync(this.motion, this.camera, this.scene.fog as THREE.Fog);
       this.ring.visible = this.motion.reveal > 0.05;
       this.ring.position.set(
         ...this.motion.slotPosition(this.motion.selected.cell),
@@ -636,7 +644,10 @@ export class SpecimenScene {
         : this.archive.visible
           ? this.archive.models.get(this.motion.selected)
           : undefined;
-    const covers = this.mode === "inspect" ? [] : [...this.archive.shells];
+    const covers =
+      this.mode === "inspect"
+        ? []
+        : this.archive.shells.filter((shell) => shell.visible);
     if (this.mode !== "inspect")
       for (const model of this.archive.models.values())
         for (const mesh of model.children)

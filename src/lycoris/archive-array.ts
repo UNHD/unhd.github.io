@@ -13,6 +13,7 @@ import {
   ArchiveAppearance,
   type ArchiveSurface,
 } from "./archive-appearance.ts";
+import { ArchiveWindow } from "./archive-window.ts";
 
 /** Array, extracted file and returning files share the exact GLB geometry. */
 export class SpecimenArray extends THREE.Group {
@@ -35,6 +36,42 @@ export class SpecimenArray extends THREE.Group {
   private viewProjection = new THREE.Matrix4();
   private cellBounds = new THREE.Box3();
   private distantKeys = new Set<string>();
+  private window = new ArchiveWindow();
+
+  private reserve(count: number) {
+    if (count <= this.shells.length) return;
+    const capacity = Math.ceil(count / 32) * 32;
+    for (const instances of [this.instances, this.distantInstances])
+      instances.forEach((previous, index) => {
+        const next = new THREE.InstancedMesh(
+          previous.geometry,
+          previous.material,
+          capacity,
+        );
+        next.userData = { ...previous.userData };
+        next.count = 0;
+        next.frustumCulled = false;
+        next.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+        this.remove(previous);
+        previous.dispose();
+        this.add(next);
+        instances[index] = next;
+      });
+    const source = this.shells[0];
+    while (this.shells.length < capacity) {
+      const shell = new THREE.Mesh(source.geometry, source.material);
+      shell.visible = false;
+      this.shells.push(shell);
+      this.add(shell);
+      if (this.label) {
+        const anchor = new THREE.Group();
+        anchor.userData.record = -1;
+        anchor.visible = false;
+        this.arrayLabels.push(anchor);
+        this.add(anchor);
+      }
+    }
+  }
 
   constructor(source: THREE.Group, label?: (index: number) => THREE.Object3D) {
     super();
@@ -117,7 +154,7 @@ export class SpecimenArray extends THREE.Group {
       const instance = new THREE.InstancedMesh(
         geometry,
         original.material,
-        ARRAY_COLUMNS * ARRAY_ROWS,
+        this.shells.length,
       );
       instance.count = 0;
       instance.frustumCulled = false;
@@ -127,7 +164,7 @@ export class SpecimenArray extends THREE.Group {
     });
   }
 
-  sync(motion: ArchiveMotion, camera?: THREE.Camera) {
+  sync(motion: ArchiveMotion, camera?: THREE.Camera, fog?: THREE.Fog) {
     const dt = Math.min(0.05, Math.max(0, motion.time - this.lastTime));
     this.lastTime = motion.time;
     this.visible = motion.reveal > 0.001;
@@ -165,7 +202,6 @@ export class SpecimenArray extends THREE.Group {
       );
     }
     const owned = new Set(cards.map((card) => cellKey(card.cell)));
-    this.cells = motion.cells;
     this.renderedCells.length = 0;
     this.distantCells.length = 0;
     const nextDistantKeys = new Set<string>();
@@ -178,15 +214,28 @@ export class SpecimenArray extends THREE.Group {
       );
       this.frustum.setFromProjectionMatrix(this.viewProjection);
     }
+    this.cells =
+      camera && fog
+        ? this.window.update(motion, camera, this.bounds, fog.far, this.frustum)
+        : motion.cells;
+    this.reserve(this.cells.length);
+    for (let i = this.cells.length; i < this.shells.length; i++) {
+      this.shells[i].visible = false;
+      if (this.arrayLabels[i]) this.arrayLabels[i].visible = false;
+    }
     this.cells.forEach((cell, i) => {
       const hidden = owned.has(cellKey(cell));
       this.dummy.position.set(...motion.slotPosition(cell));
-      // Keep a generous refraction margin. Only completely off-screen chambers
-      // are omitted; visible flowers retain the original, full-detail geometry.
-      this.cellBounds.copy(this.bounds).translate(this.dummy.position);
-      this.cellBounds.expandByScalar(1);
-      const visible =
-        !hidden && (!camera || this.frustum.intersectsBox(this.cellBounds));
+      // Native-fog windows already check the moving bounds and refraction
+      // margin. The fixed logical window is also usable without scene fog.
+      let visible = !hidden;
+      if (visible && camera && !fog) {
+        this.cellBounds
+          .copy(this.bounds)
+          .translate(this.dummy.position)
+          .expandByScalar(1);
+        visible = this.frustum.intersectsBox(this.cellBounds);
+      }
       if (visible) {
         const key = cellKey(cell);
         const nearby =

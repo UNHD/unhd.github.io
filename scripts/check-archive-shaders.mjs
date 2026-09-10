@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { ShaderChunk, ShaderLib, Vector3 } from "three";
 import { patchArchiveShader } from "../src/lycoris/archive-appearance.ts";
+import { patchDistanceFog } from "../src/lycoris/distance-fog.ts";
 import {
   flowerPostVertexShader,
   flowerPostFragmentShader,
@@ -35,11 +36,17 @@ uniform mat4 viewMatrix;
 uniform vec3 cameraPosition;
 uniform bool isOrthographic;
 `;
-for (const physical of [false, true]) {
-  for (const instanced of [false, true]) {
-    const name =
-      (physical ? "frost" : "organic") + (instanced ? "-array" : "-selected");
-    const library = physical ? ShaderLib.physical : ShaderLib.standard;
+for (const kind of ["organic", "frost", "label", "ground", "grid"]) {
+  const physical = kind === "frost";
+  const archive = kind === "organic" || physical;
+  for (const instanced of archive ? [false, true] : [false]) {
+    const name = kind + (instanced ? "-array" : "-selected");
+    const library =
+      kind === "label" || kind === "grid"
+        ? ShaderLib.basic
+        : physical
+          ? ShaderLib.physical
+          : ShaderLib.standard;
     const shader = {
       uniforms: {},
       vertexShader: library.vertexShader,
@@ -60,10 +67,13 @@ for (const physical of [false, true]) {
         { value: name === "uArchiveFocus" ? new Vector3() : 0 },
       ]),
     );
-    patchArchiveShader(shader, uniforms);
+    if (archive) patchArchiveShader(shader, uniforms);
+    else patchDistanceFog(shader);
     const defines = physical
       ? "#define PHYSICAL\n#define USE_TRANSMISSION\n#define USE_CLEARCOAT\n"
-      : "";
+      : kind === "grid"
+        ? "#define USE_COLOR\n"
+        : "";
     const vertex =
       common +
       defines +
@@ -78,6 +88,7 @@ uniform mat3 normalMatrix;
 in vec3 position;
 in vec3 normal;
 in vec2 uv;
+in vec3 color;
 ` +
       expand(shader.vertexShader);
     const fragment =

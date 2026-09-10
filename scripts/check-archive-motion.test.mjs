@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import {
   Box3,
   Camera,
+  Fog,
   Frustum,
   Matrix4,
   Vector3,
@@ -499,7 +500,7 @@ test("frustum compaction retains every visible full-detail flower through camera
   const frustum = new Frustum();
   const box = new Box3();
   let minimumCount = 63;
-  for (const aspect of [1.6, 0.6]) {
+  for (const aspect of [1.6, 21 / 9, 32 / 9, 0.6]) {
     camera.aspect = aspect;
     camera.updateProjectionMatrix();
     motion.select({ lane: 3, row: -4 });
@@ -535,6 +536,100 @@ test("frustum compaction retains every visible full-detail flower through camera
     });
   }
   assert.ok(minimumCount < 40, "off-screen geometry is still submitted");
+});
+
+test("distance-fog windows cover every visible cell through widescreen scrolling, extraction and resize", async () => {
+  const array = new SpecimenArray(await source);
+  const motion = settled();
+  motion.reduced = true;
+  const camera = new PerspectiveCamera(34, 1.6, 0.1, 150);
+  const aim = new Vector3(0, -0.4, -1);
+  const fog = new Fog(0x090d10, 23, 45);
+  const frustum = new Frustum();
+  const box = new Box3(),
+    point = new Vector3();
+  const viewBounds = new Box3();
+  let expanded = false;
+  for (const aspect of [32 / 9, 21 / 9, 1.6, 0.6]) {
+    camera.aspect = aspect;
+    camera.updateProjectionMatrix();
+    for (const detail of [false, true]) {
+      motion.setDetail(detail);
+      advance(motion, 3);
+      for (const offset of [-8.50001, -0.50001, 0.49999, 0.50001, 7.50001]) {
+        motion.trackLane.value = offset;
+        motion.trackRow.value = -offset;
+        updateArchiveCamera(camera, aim, motion, 1);
+        fog.far = camera.position.distanceTo(aim) + (detail ? 15 : 18);
+        array.sync(motion, camera, fog);
+        const keys = [...array.renderedCells, ...array.distantCells].map(
+          cellKey,
+        );
+        const rendered = new Set(keys);
+        const owned = new Set(
+          [motion.selected, ...motion.outgoing].map((card) =>
+            cellKey(card.cell),
+          ),
+        );
+        assert.equal(rendered.size, keys.length);
+        for (const key of owned) assert.ok(!rendered.has(key));
+        expanded ||= rendered.size > ARRAY_COLUMNS * ARRAY_ROWS;
+        for (const mesh of [...array.instances, ...array.distantInstances])
+          assert.ok(mesh.count <= mesh.instanceMatrix.count);
+        for (let i = array.cells.length; i < array.shells.length; i++)
+          assert.equal(
+            array.shells[i].visible,
+            false,
+            "an unused pooled chamber stayed visible",
+          );
+
+        frustum.setFromProjectionMatrix(
+          new Matrix4().multiplyMatrices(
+            camera.projectionMatrix,
+            camera.matrixWorldInverse,
+          ),
+        );
+        // Search well beyond the old 7 x 9 window, independently of the new
+        // window's ranges. A visible, not fully fogged mesh must never be lost.
+        const laneBase = Math.round(motion.trackLane.value);
+        const rowBase = Math.round(motion.trackRow.value);
+        for (let lane = laneBase - 24; lane <= laneBase + 24; lane++)
+          for (let row = rowBase - 24; row <= rowBase + 24; row++) {
+            const cell = { lane, row };
+            point.set(...motion.slotPosition(cell));
+            box.copy(array.bounds).translate(point).expandByScalar(0.2);
+            if (!frustum.intersectsBox(box)) continue;
+            // Transform all eight corners independently of the window's
+            // center/extents calculation; the shader measures view-XZ length.
+            viewBounds.copy(box).applyMatrix4(camera.matrixWorldInverse);
+            const side = Math.max(0, viewBounds.min.x, -viewBounds.max.x);
+            const depth = Math.max(0, -viewBounds.max.z);
+            const nearest = Math.hypot(side, depth);
+            if (nearest < fog.far && !owned.has(cellKey(cell)))
+              assert.ok(
+                rendered.has(cellKey(cell)),
+                `visible cell disappeared: ${aspect}, ${detail}, ${offset}, ${cellKey(cell)}`,
+              );
+          }
+      }
+    }
+  }
+  assert.ok(expanded, "wide views still use the old finite window");
+  const bytes = await readFile(
+    new URL("../public/assets/lycoris-distant.glb", import.meta.url),
+  );
+  const distant = await new GLTFLoader().parseAsync(
+    bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+    "",
+  );
+  array.setDistantSource(distant.scene);
+  array.sync(motion, camera, fog);
+  for (const mesh of array.distantInstances)
+    assert.equal(
+      mesh.instanceMatrix.count,
+      array.instances[0].instanceMatrix.count,
+      "a late LOD load lost the enlarged instance capacity",
+    );
 });
 
 test("cropped flower mask preserves screen pixel correspondence and scene depth", () => {

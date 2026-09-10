@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { records } from "./data.ts";
 import { applyCyanFlower } from "./specimen-color.ts";
+import { patchDistanceFog } from "./distance-fog.ts";
 
 // Image-space distortion leaves the original model vertices untouched.
 export const MAX_GLITCH_SHIFT = 0;
@@ -46,6 +47,7 @@ float archiveHash(vec2 p) {
 
 /** Stable physical surfaces; animated signals live in the image post pass. */
 export function patchArchiveShader(shader: Shader, uniforms: ArchiveUniforms) {
+  patchDistanceFog(shader);
   Object.assign(shader.uniforms, uniforms);
   shader.vertexShader = declarations + shader.vertexShader;
   shader.vertexShader = shader.vertexShader.replace(
@@ -160,7 +162,8 @@ export class ArchiveAppearance {
     }
     const uniforms = this.uniforms(part, shell, seed);
     material.onBeforeCompile = (shader) => patchArchiveShader(shader, uniforms);
-    material.customProgramCacheKey = () => "lycoris-static-frost-04";
+    material.customProgramCacheKey = () =>
+      "lycoris-static-frost-05-distance-fog";
     return { material, uniforms };
   }
 
