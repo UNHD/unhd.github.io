@@ -36,10 +36,19 @@ uniform mat4 viewMatrix;
 uniform vec3 cameraPosition;
 uniform bool isOrthographic;
 `;
-for (const kind of ["organic", "frost", "label", "ground", "grid"]) {
-  const physical = kind === "frost";
+for (const kind of [
+  "organic",
+  "frost",
+  "frost-lite",
+  "label",
+  "ground",
+  "grid",
+]) {
+  const physical = kind === "frost" || kind === "frost-lite";
   const archive = kind === "organic" || physical;
-  for (const instanced of archive ? [false, true] : [false]) {
+  for (const instanced of archive && kind !== "frost-lite"
+    ? [false, true]
+    : [false]) {
     const name = kind + (instanced ? "-array" : "-selected");
     const library =
       kind === "label" || kind === "grid"
@@ -70,7 +79,8 @@ for (const kind of ["organic", "frost", "label", "ground", "grid"]) {
     if (archive) patchArchiveShader(shader, uniforms);
     else patchDistanceFog(shader);
     const defines = physical
-      ? "#define PHYSICAL\n#define USE_TRANSMISSION\n#define USE_CLEARCOAT\n"
+      ? "#define PHYSICAL\n#define USE_CLEARCOAT\n" +
+        (kind === "frost" ? "#define USE_TRANSMISSION\n" : "")
       : kind === "grid"
         ? "#define USE_COLOR\n"
         : "";

@@ -14,6 +14,7 @@ import {
   type ArchiveSurface,
 } from "./archive-appearance.ts";
 import { ArchiveWindow } from "./archive-window.ts";
+import { renderProfiles, type RenderProfile } from "./render-quality.ts";
 
 /** Array, extracted file and returning files share the exact GLB geometry. */
 export class SpecimenArray extends THREE.Group {
@@ -37,6 +38,15 @@ export class SpecimenArray extends THREE.Group {
   private cellBounds = new THREE.Box3();
   private distantKeys = new Set<string>();
   private window = new ArchiveWindow();
+  private profile: RenderProfile = renderProfiles[2];
+
+  setQuality(profile: RenderProfile) {
+    this.profile = profile;
+    this.appearance.setLightweight(
+      profile.transmission === 0,
+      this.surfaces.values(),
+    );
+  }
 
   private reserve(count: number) {
     if (count <= this.shells.length) return;
@@ -248,7 +258,7 @@ export class SpecimenArray extends THREE.Group {
           camera &&
           !nearby &&
           this.dummy.position.distanceTo(camera.position) >
-            (this.distantKeys.has(key) ? 24 : 28);
+            this.profile.distantAt - (this.distantKeys.has(key) ? 4 : 0);
         const cells = distant ? this.distantCells : this.renderedCells;
         const instances = distant ? this.distantInstances : this.instances;
         if (distant) nextDistantKeys.add(key);

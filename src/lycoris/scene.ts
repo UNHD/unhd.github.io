@@ -10,6 +10,7 @@ import { FlowerPostEffects } from "./flower-post";
 import { applyCyanFlower } from "./specimen-color";
 import { fitInspectorBounds } from "./inspector-framing";
 import { withDistanceFog } from "./distance-fog";
+import { AdaptiveQuality, previewPixelRatio } from "./render-quality";
 
 export type SceneMode = "archive" | "detail" | "inspect";
 const approach = (a: number, b: number, dt: number, speed = 5) =>
@@ -40,10 +41,15 @@ export class SpecimenScene {
   onPhaseChange?: (phase: string) => void;
   private archive?: SpecimenArray;
   private flowerPost = new FlowerPostEffects();
+  private quality = new AdaptiveQuality(
+    navigator.hardwareConcurrency,
+    (navigator as Navigator & { deviceMemory?: number }).deviceMemory,
+  );
   private inspector = new THREE.Group();
   private inspectorMaterials: {
     material: THREE.MeshStandardMaterial;
     originalColor: THREE.Color;
+    transmission: number;
     part: string;
   }[] = [];
   private exploded = new Set<string>();
@@ -280,6 +286,10 @@ export class SpecimenScene {
         this.inspectorMaterials.push({
           material,
           originalColor: material.color.clone(),
+          transmission:
+            material instanceof THREE.MeshPhysicalMaterial
+              ? material.transmission
+              : 0,
           part: object.userData.assemblyPart,
         });
         return material;
@@ -295,6 +305,7 @@ export class SpecimenScene {
       });
     });
     this.tintInspector(this.motion.selected.index);
+    this.applyQuality();
     this.archive.sync(this.motion);
     this.resize();
     this.onReady?.();
@@ -388,17 +399,20 @@ export class SpecimenScene {
     return hit ? this.archive.cellFromHit(hit) : undefined;
   }
 
-  resize() {
+  resize(refit = true) {
     this.invalidate();
     const width = this.host.clientWidth,
       height = this.host.clientHeight;
     if (!width || !height) return;
+    this.renderer.setPixelRatio(
+      previewPixelRatio(this.quality.profile, width, height, devicePixelRatio),
+    );
     this.renderer.setSize(width, height);
     const drawingSize = this.renderer.getDrawingBufferSize(new THREE.Vector2());
     this.flowerPost.setSize(drawingSize.x, drawingSize.y);
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
-    if (this.mode === "inspect") this.fitInspector();
+    if (this.mode === "inspect" && refit) this.fitInspector();
   }
   revealScene() {
     this.motion.revealScene();
@@ -570,13 +584,30 @@ export class SpecimenScene {
     this.controls.update();
   }
   setQuality(high: boolean) {
-    this.renderer.setPixelRatio(Math.min(devicePixelRatio, high ? 1.75 : 1));
-    this.renderer.transmissionResolutionScale = high ? 0.75 : 0.5;
-    this.resize();
+    this.quality.setEnabled(high);
+    this.applyQuality();
+  }
+
+  private applyQuality() {
+    const profile = this.quality.profile;
+    this.renderer.transmissionResolutionScale = profile.transmission;
+    this.flowerPost.setSamples(profile.samples);
+    this.archive?.setQuality(profile);
+    for (const item of this.inspectorMaterials) {
+      if (!(item.material instanceof THREE.MeshPhysicalMaterial)) continue;
+      const transmission = profile.transmission === 0 ? 0 : item.transmission;
+      if (item.material.transmission !== transmission) {
+        item.material.transmission = transmission;
+        item.material.needsUpdate = true;
+      }
+    }
+    this.host.dataset.renderQuality = profile.name;
+    this.resize(false);
   }
 
   private frame() {
-    const dt = Math.min(this.clock.getDelta(), 0.05);
+    const frameSeconds = this.clock.getDelta();
+    const dt = Math.min(frameSeconds, 0.05);
     if (document.hidden || !this.inViewport || !this.archive) return;
     if (!this.needsRender) {
       if (
@@ -591,6 +622,7 @@ export class SpecimenScene {
       )
         return;
     }
+    if (!this.reduced && this.quality.sample(frameSeconds)) this.applyQuality();
     this.needsRender = false;
     this.motion.reduced = this.reduced;
     if (this.mode === "inspect") {

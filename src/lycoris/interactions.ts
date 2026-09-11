@@ -289,7 +289,11 @@ function openSettings() {
     `<div class="dialog-header"><div><span class="micro">GARDEN PREFERENCES</span><h2>观察偏好</h2></div><button class="close-button" data-action="close" aria-label="关闭设置">× <small>ESC</small></button></div><div class="settings-options">${[
       ["sound", "界面音效", "翻阅、读取与收藏时的轻微提示音"],
       ["reduced", "减少动态效果", "暂停起伏、数据流与界面微弱故障效果"],
-      ["quality", "高质量渲染", "保留更细腻的轮廓与高分辨率画面"],
+      [
+        "quality",
+        "精细画质 · 自适应",
+        "优先保留细节，卡顿时自动减轻负担；关闭使用轻量预览",
+      ],
     ]
       .map(
         ([id, label, description]) =>

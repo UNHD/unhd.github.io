@@ -7,6 +7,7 @@ import { patchDistanceFog } from "./distance-fog.ts";
 export const MAX_GLITCH_SHIFT = 0;
 export const DORMANT_GLASS_OPACITY = 0.72;
 export const DORMANT_GLASS_ROUGHNESS = 0.66;
+const LIGHT_GLASS_OPACITY = 0.44;
 type Shader = Parameters<THREE.Material["onBeforeCompile"]>[0];
 type ArchiveUniforms = {
   uArchiveTime: { value: number };
@@ -109,12 +110,40 @@ export function patchArchiveShader(shader: Shader, uniforms: ArchiveUniforms) {
 }
 
 export class ArchiveAppearance {
+  private lightweight = false;
   private focus = { value: new THREE.Vector3() };
   private sources = new Map<
     THREE.Material,
     { source: THREE.MeshStandardMaterial; part: string }
   >();
   private dormantMaterials: THREE.Material[] = [];
+
+  private glassQuality(material: THREE.Material) {
+    if (
+      !(material instanceof THREE.MeshPhysicalMaterial) ||
+      !material.name.includes("Glass")
+    )
+      return;
+    const transmission = this.lightweight ? 0 : 0.94;
+    if (material.transmission !== transmission) {
+      material.transmission = transmission;
+      material.needsUpdate = true;
+    }
+    material.opacity = this.lightweight
+      ? LIGHT_GLASS_OPACITY
+      : DORMANT_GLASS_OPACITY;
+    // Transmission-free glass otherwise reflects the full pale diffuse color
+    // and becomes a white cylinder under the garden lights.
+    material.color.setHex(this.lightweight ? 0x354043 : 0xd6dcdc);
+  }
+
+  setLightweight(lightweight: boolean, surfaces: Iterable<ArchiveSurface>) {
+    if (this.lightweight === lightweight) return;
+    this.lightweight = lightweight;
+    for (const material of this.dormantMaterials) this.glassQuality(material);
+    for (const surface of surfaces)
+      for (const material of surface.materials) this.glassQuality(material);
+  }
 
   private uniforms(
     part: string,
@@ -156,6 +185,7 @@ export class ArchiveAppearance {
         })
       : source.clone();
     material.name = source.name + "__ArchiveSurface";
+    this.glassQuality(material);
     if (!shell) {
       material.roughness = Math.max(material.roughness, 0.35);
       material.envMapIntensity = 0.45;
@@ -239,7 +269,7 @@ export class ArchiveAppearance {
       const material = state.materials[i];
       if (uniforms.uArchiveShell.value) {
         material.opacity = THREE.MathUtils.lerp(
-          DORMANT_GLASS_OPACITY,
+          this.lightweight ? LIGHT_GLASS_OPACITY : DORMANT_GLASS_OPACITY,
           0.028,
           state.amount,
         );

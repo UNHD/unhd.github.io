@@ -37,6 +37,11 @@ import {
 import { updateArchiveCamera } from "../src/lycoris/archive-camera.ts";
 import { fitInspectorBounds } from "../src/lycoris/inspector-framing.ts";
 import {
+  AdaptiveQuality,
+  previewPixelRatio,
+  renderProfiles,
+} from "../src/lycoris/render-quality.ts";
+import {
   MAX_GLITCH_SHIFT,
   DORMANT_GLASS_OPACITY,
   DORMANT_GLASS_ROUGHNESS,
@@ -767,8 +772,102 @@ test("flower post clock advances independently of a stationary inspector and red
   assert.equal(post.uniforms.uFault.value, 0);
   assert.equal(post.uniforms.uDistortion.value, 0);
   assert.equal(post.uniforms.uAge.value, 4);
+  assert.equal(post.uniforms.uMotion.value, 0);
   assert.ok(post.uniforms.uStrength.value > 0.99);
   assert.deepEqual(post.uniforms.uResolution.value.toArray(), [900, 700]);
+  post.dispose();
+});
+
+test("adaptive preview ignores isolated stalls and backs off sustained slow devices without oscillating", () => {
+  for (const profile of renderProfiles) {
+    const ratio = previewPixelRatio(profile, 3840, 2160, 2);
+    assert.ok(3840 * 2160 * ratio * ratio <= profile.pixels + 1);
+  }
+  assert.equal(previewPixelRatio(renderProfiles[2], 900, 500, 2), 1.75);
+  const budget = new AdaptiveQuality(8, 8);
+  for (let i = 0; i < 300; i++) budget.sample(1 / 60);
+  assert.equal(budget.tier, 2);
+  budget.sample(0.12);
+  budget.sample(5);
+  for (let i = 0; i < 120; i++) budget.sample(1 / 60);
+  assert.equal(budget.tier, 2);
+  for (let i = 0; i < 70; i++) budget.sample(1 / 20);
+  assert.equal(budget.tier, 1);
+  for (let i = 0; i < 150; i++) budget.sample(1 / 20);
+  assert.equal(budget.tier, 0);
+  for (let i = 0; i < 1800; i++) budget.sample(1 / 60);
+  assert.equal(
+    budget.tier,
+    0,
+    "quality repeatedly rises into the same overload",
+  );
+  budget.setEnabled(false);
+  budget.setEnabled(true);
+  assert.equal(budget.tier, 2);
+  const small = new AdaptiveQuality(4, 4);
+  assert.equal(small.tier, 1);
+  for (let i = 0; i < 60; i++) small.sample(0.2);
+  assert.equal(
+    small.tier,
+    0,
+    "very slow devices never reach the light profile",
+  );
+});
+
+test("light preview keeps selection geometry, tint and fog while removing glass transmission passes", async () => {
+  const array = new SpecimenArray(await source);
+  const motion = settled();
+  advance(motion, 2, () => array.sync(motion));
+  const selected = array.models.get(motion.selected);
+  const petals = selected.children.find(
+    (mesh) => mesh.userData.assemblyPart === "petals",
+  );
+  const geometry = petals.geometry;
+  const color = petals.material.color.clone();
+  array.setQuality(renderProfiles[0]);
+  advance(motion, 0.1, () => array.sync(motion));
+  assert.equal(petals.geometry, geometry);
+  assert.ok(petals.material.color.equals(color));
+  assert.ok(
+    array.shells.every(
+      (shell) => shell.material.transmission === 0 && shell.material.fog,
+    ),
+  );
+  const selectedGlass = selected.children.find((mesh) =>
+    mesh.material.name.includes("Glass"),
+  );
+  assert.equal(selectedGlass.material.transmission, 0);
+  assert.ok(selectedGlass.material.opacity < 0.03);
+  motion.select({ lane: 2, row: 1 });
+  array.sync(motion);
+  for (const model of array.models.values())
+    assert.equal(
+      model.children.find((mesh) => mesh.material.name.includes("Glass"))
+        .material.transmission,
+      0,
+    );
+  array.setQuality(renderProfiles[2]);
+  advance(motion, 0.1, () => array.sync(motion));
+  assert.equal(array.shells[0].material.transmission, 0.94);
+  assert.equal(array.shells[0].material.opacity, DORMANT_GLASS_OPACITY);
+});
+
+test("post targets release multisample attachments only when the preview budget changes", () => {
+  const post = new FlowerPostEffects();
+  post.setSize(900, 700);
+  let releases = 0;
+  for (const target of [post.sceneTarget, post.maskTarget])
+    target.addEventListener("dispose", () => releases++);
+  post.setSamples(2);
+  assert.equal(releases, 2);
+  post.setSamples(2);
+  assert.equal(releases, 2);
+  assert.equal(post.sceneTarget.samples, 2);
+  assert.equal(post.maskTarget.samples, 2);
+  assert.deepEqual(post.uniforms.uResolution.value.toArray(), [900, 700]);
+  post.setSamples(4);
+  assert.equal(post.sceneTarget.samples, 4);
+  assert.equal(releases, 4);
   post.dispose();
 });
 

@@ -113,6 +113,7 @@ uniform float uDistortion;
 uniform float uSeed;
 uniform float uStrength;
 uniform float uCyan;
+uniform float uMotion;
 varying vec2 vUv;
 
 float signalHash(vec2 p) {
@@ -164,15 +165,20 @@ void main() {
     float bandSeed = signalHash(vec2(band + uSeed, tick));
     float tear = step(0.73, bandSeed) *
       (signalHash(vec2(band + uSeed, tick + 23.0)) * 2.0 - 1.0) * uFault;
-    float scanY = mod(uTime * 0.68, 3.2) - 1.6;
-    float scan = exp(-pow((fieldUV.y - scanY) / 0.13, 2.0));
+    vec2 local = (vUv - uBounds.xy) / flowerSize;
+    // A read head climbs the flower, leaving short decoded packets behind it.
+    // It rests between sweeps; the same phase drives the image tear and data.
+    float cycle = fract(uAge * 0.16);
+    float scanY = mix(-0.12, 1.16, smoothstep(0.08, 0.83, cycle));
+    float scanActive = smoothstep(0.02, 0.12, cycle) * (1.0 - smoothstep(0.84, 0.98, cycle)) * uMotion;
+    float scan = (1.0 - smoothstep(0.01, 0.095, abs(local.y - scanY))) * scanActive;
     float bend = sin(fieldUV.y * 5.5 + uTime * 1.65 + uSeed) *
       (0.65 + 0.35 * cos(fieldUV.x * 3.0 - uTime));
     float reach = clamp(flowerSize.x * uResolution.x * 0.09, 16.0, 46.0);
     vec2 offset = vec2(
-      bend * (2.0 + 7.0 * uDistortion) * uDistortion +
-        tear * reach + scan * sin(fieldUV.x * 4.0) * 6.0 * uDistortion,
-      sin(fieldUV.x * 5.0 - uTime * 1.1) * 2.5 * uDistortion +
+      bend * 2.0 * uDistortion +
+        tear * reach + scan * sin(fieldUV.x * 4.0) * 8.0 * uDistortion,
+      sin(fieldUV.x * 5.0 - uTime * 1.1) * 0.7 * uDistortion +
         tear * 3.0
     ) * pixel * strength;
     vec2 sourceUV = clamp(vUv + offset, pixel * 0.5, 1.0 - pixel * 0.5);
@@ -190,16 +196,17 @@ void main() {
     result = mix(result, split, uDistortion * 0.8);
 
     float coverage = flowerCoverage(sourceUV) * uStrength;
-    vec2 local = (sourceUV - uBounds.xy) / flowerSize;
-    vec2 cells = max(uBounds.zw * uResolution / vec2(9.0, 13.0), vec2(8.0, 12.0));
-    float column = floor(local.x * cells.x);
-    float seed = signalHash(vec2(column, uSeed));
-    float scroll = local.y * cells.y + uTime * (2.5 + seed * 4.0);
-    float digit = step(0.5, signalHash(vec2(column, floor(scroll) + uSeed)));
-    float tail = fract(local.y * 1.2 + uTime * (0.12 + seed * 0.12) + seed);
-    float trail = (1.0 - smoothstep(0.06, 0.48, tail)) * step(0.22, seed);
-    float stream = signalDigit(vec2(fract(local.x * cells.x), fract(scroll)), digit) * trail;
-    float head = 1.0 - smoothstep(0.0, 0.055, tail);
+    vec2 cells = max(uBounds.zw * uResolution / vec2(8.0, 12.0), vec2(10.0, 14.0));
+    vec2 packetUV = local * cells;
+    float row = floor(packetUV.y);
+    float rowSeed = signalHash(vec2(row, uSeed));
+    float readX = fract(uTime * (0.2 + rowSeed * 0.15) + rowSeed) * (cells.x + 12.0) - 6.0;
+    float behind = readX - packetUV.x;
+    float packet = smoothstep(-0.2, 0.5, behind) * (1.0 - smoothstep(3.0, 9.0, behind));
+    float digit = step(0.5, signalHash(vec2(floor(packetUV.x) + uSeed, row + floor(uTime * 3.0))));
+    float decoded = smoothstep(-0.02, 0.01, scanY - local.y) * (1.0 - smoothstep(0.04, 0.28, scanY - local.y));
+    float stream = signalDigit(fract(packetUV), digit) * packet * (0.12 + decoded * scanActive * 0.88);
+    float head = 1.0 - smoothstep(0.0, 1.6, max(0.0, behind));
 
     if (coverage > 0.001) {
       vec2 inkUV = local * vec2(4.0, 3.2) + uSeed;
@@ -215,6 +222,13 @@ void main() {
     // destination may lie outside the silhouette. Foreground occlusion remains
     // part of the source mask; no extra scene render or history buffer is needed.
     vec3 signalColor = mix(vec3(1.35, 0.035, 0.1), vec3(0.015, 0.95, 1.25), uCyan);
+    // Reconstruct only the read band on a coarser raster. Outside that band the
+    // flower retains its original fine filaments, with detached packet traces.
+    vec2 rasterUV = (floor(sourceUV * uResolution / vec2(4.0, 3.0)) + 0.5) * vec2(4.0, 3.0) * pixel;
+    vec3 raster = texture2D(tScene, clamp(rasterUV, pixel * 0.5, 1.0 - pixel * 0.5)).rgb;
+    result = mix(result, raster, scan * strength * 0.42);
+    float readLine = (1.0 - smoothstep(pixel.y / flowerSize.y, 3.0 * pixel.y / flowerSize.y, abs(local.y - scanY))) * scanActive;
+    result += signalColor * (scan * coverage * 0.24 + readLine * strength * 0.10);
     float echo = 0.0;
     if (uFault > 0.001) {
       float fragment = step(0.56, signalHash(vec2(band + 7.0, tick + uSeed)));
@@ -228,13 +242,13 @@ void main() {
 
     vec3 streamColor = mix(vec3(2.2, 0.09, 0.065), vec3(0.01, 0.95, 1.2), uCyan);
     vec3 headColor = mix(vec3(3.0, 1.4, 0.95), vec3(0.25, 1.6, 1.8), uCyan);
-    float stray = (1.0 - coverage) * step(0.84, seed) *
-      uDistortion * (0.08 + 0.32 * uFault) * strength;
-    result += mix(streamColor, headColor, head) * stream * (coverage + stray);
+    float stray = (1.0 - coverage) * step(0.70, rowSeed) *
+      (decoded * scanActive * 0.34 + uFault * 0.10) * strength;
+    result += mix(streamColor, headColor, head) * stream * (coverage * 0.65 + stray);
     float hairline = pow(0.5 + 0.5 * sin(vUv.y * uResolution.y * 1.6), 14.0);
     result += signalColor * hairline * abs(tear) * strength * 0.11;
     // Emitted fragments also remain visible against the transparent scene sky.
-    alpha = max(alpha, clamp(echo * 0.5 + stream * stray * 0.6, 0.0, 1.0));
+    alpha = max(alpha, clamp(echo * 0.5 + stream * stray * 0.6 + readLine * strength * 0.07, 0.0, 1.0));
   }
   gl_FragColor = vec4(result, alpha);
   #include <tonemapping_fragment>
@@ -280,6 +294,7 @@ export class FlowerPostEffects {
     uSeed: { value: 0 },
     uStrength: { value: 0 },
     uCyan: { value: 0 },
+    uMotion: { value: 1 },
   };
   private sceneTarget = new THREE.WebGLRenderTarget(1, 1, {
     type: THREE.HalfFloatType,
@@ -326,6 +341,14 @@ export class FlowerPostEffects {
     this.uniforms.uResolution.value.set(width, height);
   }
 
+  setSamples(samples: number) {
+    for (const target of [this.sceneTarget, this.maskTarget]) {
+      if (target.samples === samples) continue;
+      target.samples = samples;
+      target.dispose();
+    }
+  }
+
   update(
     root: THREE.Object3D | undefined,
     state: ArchiveSurface | undefined,
@@ -336,6 +359,7 @@ export class FlowerPostEffects {
     activity = 0,
   ) {
     this.uniforms.uCyan.value = cyan ? 1 : 0;
+    this.uniforms.uMotion.value = reduced ? 0 : 1;
     this.mask.sync(root, covers);
     if (state !== this.state || root !== this.root) {
       this.state = state;
