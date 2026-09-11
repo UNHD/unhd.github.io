@@ -113,7 +113,18 @@ scene.onPhaseChange = (phase) => {
 scene.ready
   .then(() => {
     $("#model-status").textContent = "3D / CONNECTED";
-    $("#model-loading").hidden = true;
+    const loading = $("#model-loading");
+    if (scene.reduced) loading.hidden = true;
+    else {
+      loading.style.pointerEvents = "none";
+      loading.animate([{ opacity: 1 }, { opacity: 0 }], {
+        duration: 650,
+        easing: "ease-out",
+        fill: "forwards",
+      }).onfinish = () => {
+        loading.hidden = true;
+      };
+    }
   })
   .catch((error) => {
     $("#model-status").textContent = "MODEL UNAVAILABLE";

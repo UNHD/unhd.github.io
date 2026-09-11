@@ -1,0 +1,22 @@
+{
+  "name": "Lycoris radiata / \u5f7c\u5cb8",
+  "revision": "photo-study-04",
+  "reference": "reference/lycoris-photo/user-reference.png",
+  "florets": 6,
+  "tepals": 36,
+  "stamens": 36,
+  "styles": 6,
+  "parts": [
+    "base",
+    "chamber",
+    "pedicels",
+    "petals",
+    "stamens",
+    "stem"
+  ],
+  "meshCount": 11,
+  "vertices": 52656,
+  "generator": "Blender 5.1.2",
+  "axis": "glTF Y up",
+  "source": "art/build_lycoris.py"
+}

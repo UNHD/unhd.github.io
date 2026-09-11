@@ -1,6 +1,7 @@
 import type { SpecimenScene } from "./scene";
 import flowerSvg from "./opening-flower.svg?raw";
 import flowerMark from "./flower-mark.svg?raw";
+import { signalFallMarkup } from "./signal-field";
 import {
   filamentProgress,
   OpeningPlayback,
@@ -50,7 +51,7 @@ function gardenPattern() {
           `<use href="#bloom-dark-umbel" transform="translate(${x} ${y}) rotate(${i % 2 ? -8 : 5}) scale(${scale})" opacity="${opacity}"/>`,
       )
       .join("");
-  return `<svg viewBox="0 0 1440 900" preserveAspectRatio="xMidYMid slice" aria-hidden="true"><defs><g id="bloom-dark-umbel" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round">${outlines}<path d="M0 102 C-8 202 12 326 -10 465"/></g></defs><g class="bloom-pattern-far">${layer(0, 8)}</g><g class="bloom-pattern-near">${layer(8, 12)}</g></svg>`;
+  return `<svg viewBox="0 0 1440 900" preserveAspectRatio="xMidYMid slice" aria-hidden="true"><defs><g id="bloom-dark-umbel" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round">${outlines}<path d="M0 102 C-8 202 12 326 -10 465"/></g><clipPath id="bloom-fault-window"><path d="M0 155h440v16H0z M1030 300h410v22h-410z M0 736h580v12H0z"/></clipPath></defs><g class="bloom-pattern-far">${layer(0, 8)}</g><g class="bloom-pattern-near">${layer(8, 12)}</g><g class="bloom-pattern-echo" clip-path="url(#bloom-fault-window)">${layer(0, 12)}</g></svg>`;
 }
 
 export class BootSequence {
@@ -96,6 +97,7 @@ export class BootSequence {
       <div class="bloom-veil" aria-hidden="true"></div>
       <div class="bloom-pattern" aria-hidden="true">${gardenPattern()}</div>
       <div class="bloom-atmosphere" aria-hidden="true"></div>
+      <div class="bloom-downlink">${signalFallMarkup(12)}</div>
       <div class="bloom-dust" aria-hidden="true">${Array.from({ length: 18 }, (_, i) => `<i style="left:${8 + ((i * 41) % 84)}%;top:${12 + ((i * 23) % 67)}%;--dust-index:${i}"></i>`).join("")}</div>
       <div class="bloom-top"><span>LY <i>/</i> 001</span><span>NIGHT GARDEN</span><span>秋 · 夜间观测</span></div>
       <div class="bloom-signal" aria-hidden="true"><div class="bloom-signal-heading"><i></i><span>RECONSTRUCTING A MEMORY</span><i></i></div><div class="bloom-signal-lines">${SIGNAL_LINES.map((_, i) => `<p class="bloom-signal-row${i === 4 ? " bloom-signal-major" : ""}"><span></span></p>`).join("")}</div><div class="bloom-signal-foot"><span>花开时不见叶，叶生时不见花。</span><b></b></div></div>
@@ -212,7 +214,7 @@ export class BootSequence {
     this.captions.forEach((caption, i) => {
       const opacity = state.captions[i] * (1 - skip);
       caption.style.opacity = String(opacity);
-      caption.style.translate = `0 ${(1 - opacity) * 8}px`;
+      caption.style.translate = `0 ${(1 - opacity) * -8}px`;
       caption.style.filter = `blur(${(1 - opacity) * 4}px)`;
     });
     const tick = Math.floor(t * 13);
@@ -222,7 +224,7 @@ export class BootSequence {
         const fault =
           t < 4.0 && (tick + i * 7) % 23 === 0 ? (i % 2 ? 1 : -1) : 0;
         line.style.opacity = String(state.opacity);
-        line.style.transform = `translate(${fault * 2}px, ${(1 - state.reveal) * 9 + (i - 4) * state.dissolve * 7}px)`;
+        line.style.transform = `translate(${fault * 2}px, ${(1 - state.reveal) * -14 + state.dissolve * (20 + i * 2)}px)`;
         line.style.filter = `blur(${(1 - state.reveal) * 3 + state.dissolve * 4}px)`;
         line.style.setProperty("--signal-fault", String(fault));
         if (tick !== this.signalTick && t < 6.2) {
@@ -274,6 +276,7 @@ export class BootSequence {
   };
 
   private onVisibility = () => {
+    if (this.element) this.element.dataset.paused = String(document.hidden);
     cancelAnimationFrame(this.frame);
     this.lastTime = performance.now();
     if (!document.hidden && this.running) this.update();

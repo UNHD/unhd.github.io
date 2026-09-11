@@ -1,6 +1,11 @@
 import { categories } from "./data";
+import { signalFallMarkup } from "./signal-field";
 
 export function gardenLayout(symbol: string) {
+  const loadingSymbol = symbol.replace(
+    /data-delay="([\d.]+)"/g,
+    'style="--trace-delay:$1"',
+  );
   return `
     <header class="topbar">
       <a class="brand" href="${import.meta.env.BASE_URL}" aria-label="彼岸夜间花庭首页"><b>彼岸</b><span>夜间花庭<small>LYCORIS</small></span></a>
@@ -14,7 +19,7 @@ export function gardenLayout(symbol: string) {
         <div class="stage-topline"><span>花叶错落，各有其时。</span><span class="stage-index">01 — 40</span></div>
         <div class="specimen-label"><span class="micro" id="specimen-code">LY-001</span><span id="specimen-title">赤色石蒜</span></div>
         <div class="stage-bottomline"><span id="stage-hint">点击花海中的标本 · 双击抽取</span><button data-action="rotate" aria-label="抽取标本并切换自动旋转" aria-pressed="false"><i class="rotate-indicator"></i> 自动旋转</button><span id="model-status">载入花海…</span></div>
-        <div class="stage-loading" id="model-loading"><div class="loading-cross">${symbol}</div><span>花海正在显影</span><small id="load-progress">LYCORIS / NIGHT GARDEN</small></div>
+        <div class="stage-loading" id="model-loading">${signalFallMarkup(6)}<div class="loading-cross">${loadingSymbol}</div><span>花海正在显影</span><small id="load-progress">LYCORIS / NIGHT GARDEN</small></div>
       </section>
       <aside class="dossier" aria-label="当前标本题签">
         <div class="dossier-top"><span id="record-category">其一 · 植物档案</span><div class="file-code"><span>№</span><span id="record-number">001</span></div></div>

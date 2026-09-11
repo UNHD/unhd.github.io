@@ -1,0 +1,223 @@
+/* One signal language: dim tail, brief readable fragment, downward release. */
+.signal-fall {
+  --fall-distance: 640px;
+  --fall-opacity: 0.26;
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  user-select: none;
+  mask-image: linear-gradient(transparent, #000 12%, #000 78%, transparent);
+}
+.signal-fall > i {
+  position: absolute;
+  top: 0;
+  width: 20px;
+  font: 9px/1.7 var(--mono, monospace);
+  letter-spacing: 0.12em;
+  text-align: center;
+  color: var(--red, #b65a59);
+  white-space: pre;
+  opacity: 0;
+  animation: signal-descend var(--fall-duration) var(--fall-delay) linear
+    infinite;
+}
+.signal-fall > i > span {
+  display: block;
+  color: transparent;
+  background-clip: text;
+  background-image: linear-gradient(
+    transparent,
+    var(--red, #b65a59) 74%,
+    #e5d9c8
+  );
+}
+@keyframes signal-descend {
+  0% {
+    transform: translateY(-120px);
+    opacity: 0;
+  }
+  8% {
+    opacity: var(--fall-opacity);
+  }
+  68% {
+    opacity: var(--fall-opacity);
+  }
+  82%,
+  100% {
+    transform: translateY(var(--fall-distance));
+    opacity: 0;
+  }
+}
+
+/* Photo-derived curled tepals and long filaments, engraved into the margins. */
+.dossier {
+  isolation: isolate;
+}
+.dossier::before,
+.dossier::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: -70px -130px -30px -90px;
+  pointer-events: none;
+  background: #89a395;
+  mask: url("./signal-engraving.svg") center / 100% 100% no-repeat;
+  opacity: 0.085;
+}
+.dossier::after {
+  background: var(--red);
+  opacity: 0;
+  clip-path: polygon(
+    0 24%,
+    100% 24%,
+    100% 27%,
+    0 27%,
+    0 53%,
+    100% 53%,
+    100% 55%,
+    0 55%
+  );
+  animation: engraving-fault 14s 2s steps(1, end) infinite;
+}
+.detail-mode .dossier {
+  overflow: hidden;
+}
+.detail-mode .dossier::before,
+.detail-mode .dossier::after {
+  inset: 15px -120px -70px auto;
+  width: min(75%, 850px);
+  mask-size: contain;
+  mask-position: right top;
+}
+@keyframes engraving-fault {
+  0%,
+  61%,
+  64%,
+  100% {
+    opacity: 0;
+    transform: translate(0, 0);
+  }
+  61.3% {
+    opacity: 0.32;
+    transform: translate(5px, 2px);
+  }
+  61.8% {
+    opacity: 0.14;
+    transform: translate(-3px, 4px);
+  }
+  62.3% {
+    opacity: 0;
+    transform: translate(0, 5px);
+  }
+  63% {
+    opacity: 0.2;
+    transform: translate(2px, 6px);
+  }
+}
+
+.ui-downlink {
+  position: absolute;
+  inset: 72px 0 0;
+  z-index: 3;
+  overflow: hidden;
+  pointer-events: none;
+  --fall-distance: min(88svh, 900px);
+}
+.ui-downlink .signal-fall {
+  --fall-distance: min(88svh, 900px);
+}
+.ui-downlink .signal-fall > i:nth-child(n + 5) {
+  display: none;
+}
+#stage[data-opening] .ui-downlink {
+  opacity: var(--opening-ui, 0);
+}
+.bloom-downlink {
+  position: absolute;
+  inset: 0;
+  opacity: calc(var(--bloom-ink) * (0.24 + var(--bloom-signal) * 0.76));
+  pointer-events: none;
+}
+.bloom-downlink .signal-fall {
+  --fall-distance: 92svh;
+  --fall-opacity: 0.48;
+}
+.bloom-pattern-echo {
+  color: #d56368;
+  animation: engraving-fault 8s -3s steps(1, end) infinite;
+  opacity: 0;
+}
+.stage-loading .signal-fall {
+  --fall-distance: 65svh;
+  --fall-opacity: 0.35;
+}
+.stage-loading[hidden] {
+  display: none;
+}
+.stage-loading .loading-cross {
+  width: 88px;
+  animation: none;
+}
+.stage-loading .loading-cross svg {
+  display: block;
+  width: 100%;
+}
+.stage-loading .bloom-filament,
+.stage-loading .bloom-petal {
+  animation: loading-fragment 3.6s ease-in-out infinite;
+  animation-delay: calc(var(--trace-delay, 0) * 1s);
+}
+@keyframes loading-fragment {
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+  48% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+    translate: 1px 1px;
+  }
+  53% {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+[data-ui-paused="true"] .signal-fall > i,
+[data-ui-paused="true"] .dossier::after,
+.bloom-opening[data-paused="true"] * {
+  animation-play-state: paused !important;
+}
+[data-ui-motion="reduced"] .signal-fall,
+.reduce-motion .signal-fall,
+[data-ui-motion="reduced"] .dossier::after,
+.reduce-motion .dossier::after {
+  display: none;
+}
+.reduce-motion .stage-loading .bloom-filament,
+.reduce-motion .stage-loading .bloom-petal {
+  animation: none;
+}
+#stage:has(#scene[data-render-quality="light"])
+  .ui-downlink
+  .signal-fall
+  > i:nth-child(n + 3) {
+  display: none;
+}
+@media (max-width: 600px) {
+  .ui-downlink .signal-fall > i:nth-child(n + 3),
+  .bloom-downlink .signal-fall > i:nth-child(n + 7) {
+    display: none;
+  }
+  .dossier::before,
+  .dossier::after {
+    inset: -30px 0 -25px 20%;
+  }
+  .detail-mode .dossier::before,
+  .detail-mode .dossier::after {
+    width: 100%;
+    opacity: 0.1;
+  }
+}

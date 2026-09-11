@@ -168,6 +168,20 @@ test("the photo-study opening has 36 curled tepals and 42 staggered filament/sty
 });
 
 test("glitch text preserves its columns, settles into readable lines, and dissolves before the title hold", () => {
+  for (let t = 0; t <= 6.3; t += 1 / 30) {
+    for (let row = 1; row < SIGNAL_LINES.length; row++) {
+      const above = signalLineFrame(t, row - 1);
+      const below = signalLineFrame(t, row);
+      assert.ok(
+        above.reveal >= below.reveal,
+        "decode must descend through the rows",
+      );
+      assert.ok(
+        above.dissolve >= below.dissolve,
+        "release must follow the same downward order",
+      );
+    }
+  }
   SIGNAL_LINES.forEach((source, row) => {
     for (let t = 0; t <= 4; t += 1 / 30) {
       const text = openingSignalText(source, t, row);

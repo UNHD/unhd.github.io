@@ -8,19 +8,21 @@
 .ui-signal-fragment {
   position: absolute;
   display: block;
-  height: 1px;
+  width: 18px;
+  white-space: pre;
+  text-align: center;
+  font: 9px/1.55 var(--mono);
+  letter-spacing: 0.08em;
   opacity: 0;
-  background: linear-gradient(
-    90deg,
-    transparent,
-    var(--red) 23%,
-    transparent 25%,
-    #a6d7d5 37%,
-    transparent 39%,
-    var(--red) 80%,
-    transparent
-  );
-  transform-origin: left;
+  color: var(--red);
+  mask-image: linear-gradient(transparent, #000 75%);
+}
+.ui-text-echo {
+  position: absolute;
+  display: block;
+  color: var(--red);
+  overflow: hidden;
+  opacity: 0;
 }
 [data-ui-motion="reduced"] .ui-signal-layer,
 .reduce-motion .ui-signal-layer {

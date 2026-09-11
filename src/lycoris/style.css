@@ -1170,9 +1170,9 @@ svg {
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  *,
-  *:before,
-  *:after {
+  body:not(:has(#stage[data-ui-motion="full"])) *,
+  body:not(:has(#stage[data-ui-motion="full"])) *:before,
+  body:not(:has(#stage[data-ui-motion="full"])) *:after {
     animation-duration: 1ms !important;
     transition-duration: 1ms !important;
     scroll-behavior: auto !important;

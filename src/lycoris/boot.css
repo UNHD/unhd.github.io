@@ -54,7 +54,7 @@ body:has(.bloom-opening) {
 }
 .bloom-pattern-far {
   transform-origin: 50% 40%;
-  transform: translateY(calc(var(--bloom-pattern-travel) * -14px))
+  transform: translateY(calc(var(--bloom-pattern-travel) * 14px))
     scale(calc(1 + var(--bloom-pattern-travel) * 0.025));
 }
 .bloom-pattern-near {
@@ -78,7 +78,7 @@ body:has(.bloom-opening) {
   background: #c1ad90;
   opacity: calc(0.15 + var(--bloom-breath) * 0.5);
   transform: translateY(
-    calc(var(--bloom-progress) * (-18px - var(--dust-index) * 1px))
+    calc(var(--bloom-progress) * (18px + var(--dust-index) * 1px))
   );
 }
 .bloom-top {
@@ -234,7 +234,7 @@ body:has(.bloom-opening) {
   flex-direction: column;
   align-items: center;
   text-align: center;
-  transform: translate(-50%, calc(-50% - var(--bloom-identity-out) * 22px));
+  transform: translate(-50%, calc(-50% + var(--bloom-identity-out) * 22px));
   pointer-events: none;
 }
 .bloom-flower {
@@ -285,7 +285,7 @@ body:has(.bloom-opening) {
     calc((1 - var(--bloom-title-in)) * 6px + var(--bloom-title-out) * 5px)
   );
   transform: translateY(
-    calc((1 - var(--bloom-title-in)) * 14px - var(--bloom-title-out) * 8px)
+    calc((1 - var(--bloom-title-in)) * -14px + var(--bloom-title-out) * 8px)
   );
   will-change: opacity, transform;
 }
@@ -316,10 +316,10 @@ body:has(.bloom-opening) {
 .bloom-title h1 i {
   display: block;
   font-style: normal;
-  transform: translateY(calc((1 - var(--bloom-title-in)) * 90%));
+  transform: translateY(calc((1 - var(--bloom-title-in)) * -90%));
 }
 .bloom-title h1 > span:last-child i {
-  transform: translateY(calc((1 - var(--bloom-title-in)) * 112%));
+  transform: translateY(calc((1 - var(--bloom-title-in)) * -112%));
 }
 .bloom-subtitle {
   display: grid;
@@ -327,7 +327,7 @@ body:has(.bloom-opening) {
   gap: 13px;
   margin-top: 24px;
   opacity: var(--bloom-subtitle);
-  transform: translateY(calc((1 - var(--bloom-subtitle)) * 8px));
+  transform: translateY(calc((1 - var(--bloom-subtitle)) * -8px));
   filter: blur(calc((1 - var(--bloom-subtitle)) * 3px));
 }
 .bloom-subtitle p {

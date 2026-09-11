@@ -179,6 +179,7 @@ function openDetail() {
   scene.setMode("detail");
   document.body.classList.add("detail-mode");
   renderDetail();
+  uiGlitch.revealContent($(".detail-identity"));
   audio.play("open");
 }
 function renderDetail() {
@@ -368,6 +369,7 @@ export function installInteractions() {
     if (button.dataset.tab) {
       activeTab = button.dataset.tab;
       renderDetail();
+      uiGlitch.revealContent($("#detail-reading"));
       return;
     }
     if (button.dataset.part) {

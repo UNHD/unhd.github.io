@@ -94,9 +94,9 @@ export const SIGNAL_LINES = [
 ] as const;
 
 export function signalLineFrame(time: number, row: number) {
-  const order = [4, 2, 6, 0, 8, 3, 5, 1, 7].indexOf(row);
+  const order = row;
   const enter = 0.12 + order * 0.14;
-  const exit = 4.05 + Math.abs(row - 4) * 0.13;
+  const exit = 4.05 + row * 0.1;
   const reveal = openingEase(time, enter, enter + 1.0);
   const dissolve = openingEase(time, exit, exit + 1.25);
   return {

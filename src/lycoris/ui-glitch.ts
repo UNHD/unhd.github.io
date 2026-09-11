@@ -1,4 +1,5 @@
 import "./ui-glitch.css";
+import { signalFallMarkup } from "./signal-field";
 
 const textTargets = [
   ".brand b",
@@ -23,15 +24,22 @@ const lineTargets = ".title-rule, .mini-rule, .chapter-progress, .signal-rule";
 /** Brief local signal faults. Text and hit targets keep their real content. */
 export class UiGlitch {
   private layer = document.createElement("div");
+  private downlink = document.createElement("div");
   private active = new Set<Animation>();
   private timer?: ReturnType<typeof setTimeout>;
   private reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
   private lastInput = -Infinity;
+  private lastSelection = -Infinity;
   private lastTarget?: HTMLElement;
 
   constructor(private root: HTMLElement) {
     this.layer.className = "ui-signal-layer";
     this.layer.setAttribute("aria-hidden", "true");
+    this.downlink.className = "ui-downlink";
+    this.downlink.setAttribute("aria-hidden", "true");
+    this.downlink.innerHTML = signalFallMarkup(4);
+    root.appendChild(this.downlink);
+    root.dataset.uiPaused = String(document.hidden);
     root.appendChild(this.layer);
     root.addEventListener("pointerover", this.onInteraction);
     root.addEventListener("focusin", this.onInteraction);
@@ -155,24 +163,24 @@ export class UiGlitch {
   }
 
   private scratch(target: HTMLElement) {
-    if (this.paused || this.active.size >= 2) return;
+    if (this.paused || this.active.size >= 4) return;
     const bounds = target.getBoundingClientRect();
     const origin = this.root.getBoundingClientRect();
     const fragment = document.createElement("span");
     fragment.className = "ui-signal-fragment";
-    fragment.style.left = `${bounds.left - origin.left}px`;
-    fragment.style.top = `${bounds.bottom - origin.top + 4}px`;
-    fragment.style.width = `${Math.min(bounds.width, 42 + Math.random() * 90)}px`;
+    fragment.style.left = `${Math.max(8, bounds.left - origin.left - 24)}px`;
+    fragment.style.top = `${Math.max(0, bounds.top - origin.top - 48)}px`;
+    fragment.textContent = "4C\n59\n..\n01\n↓";
     this.layer.appendChild(fragment);
     this.track(
       fragment.animate(
         [
-          { opacity: 0, translate: "-2px 0", scale: ".8 1" },
-          { opacity: 0.14, translate: "1px 0", scale: "1 1", offset: 0.3 },
-          { opacity: 0.06, translate: "-1px 0", scale: ".6 1", offset: 0.6 },
-          { opacity: 0, translate: "0 0", scale: "1 1" },
+          { opacity: 0, transform: "translateY(-12px)" },
+          { opacity: 0.52, transform: "translateY(8px)", offset: 0.16 },
+          { opacity: 0.26, transform: "translateY(68px)", offset: 0.66 },
+          { opacity: 0, transform: "translateY(118px)" },
         ],
-        { duration: 190, easing: "steps(1,end)" },
+        { duration: 1500, easing: "linear" },
       ),
       () => fragment.remove(),
     );
@@ -193,15 +201,103 @@ export class UiGlitch {
     this.pulse(target);
   };
 
+  /** Duplicate only a title's ink, never its controls or accessible content. */
+  private textEcho(target: HTMLElement) {
+    if (this.paused || this.active.size >= 4) return;
+    const bounds = target.getBoundingClientRect();
+    const origin = this.root.getBoundingClientRect();
+    const style = getComputedStyle(target);
+    const echo = document.createElement("span");
+    echo.className = "ui-text-echo";
+    echo.textContent = target.textContent;
+    Object.assign(echo.style, {
+      left: `${bounds.left - origin.left}px`,
+      top: `${bounds.top - origin.top}px`,
+      width: `${bounds.width}px`,
+      height: `${bounds.height}px`,
+      font: style.font,
+      letterSpacing: style.letterSpacing,
+      textAlign: style.textAlign,
+      overflowWrap: style.overflowWrap,
+    });
+    this.layer.appendChild(echo);
+    this.track(
+      echo.animate(
+        [
+          {
+            opacity: 0,
+            transform: "translate(0,0)",
+            clipPath: "inset(15% 0 68%)",
+          },
+          {
+            opacity: 0.5,
+            transform: "translate(4px,1px)",
+            clipPath: "inset(15% 0 68%)",
+            offset: 0.2,
+          },
+          {
+            opacity: 0.3,
+            transform: "translate(-2px,3px)",
+            clipPath: "inset(48% 0 38%)",
+            offset: 0.45,
+          },
+          {
+            opacity: 0.22,
+            transform: "translate(3px,4px)",
+            clipPath: "inset(75% 0 12%)",
+            offset: 0.7,
+          },
+          {
+            opacity: 0,
+            transform: "translate(0,6px)",
+            clipPath: "inset(90% 0 0)",
+          },
+        ],
+        { duration: 380, easing: "steps(1,end)" },
+      ),
+      () => echo.remove(),
+    );
+  }
+
+  revealContent(target: HTMLElement) {
+    if (this.paused || this.active.size >= 4) return;
+    this.track(
+      target.animate(
+        [
+          {
+            opacity: 0.25,
+            transform: "translateY(-8px)",
+            clipPath: "inset(0 0 65%)",
+          },
+          {
+            opacity: 0.82,
+            transform: "translateY(-2px)",
+            clipPath: "inset(0 0 12%)",
+            offset: 0.5,
+          },
+          { opacity: 1, transform: "translateY(0)", clipPath: "inset(0)" },
+        ],
+        { duration: 620, easing: "cubic-bezier(.2,.7,.2,1)" },
+      ),
+    );
+    this.scratch(target);
+  }
+
   private onSelection = () => {
     const now = performance.now();
-    if (this.paused || now - this.lastInput < 700) return;
-    this.lastInput = now;
+    if (this.paused || now - this.lastSelection < 160) return;
+    this.lastSelection = now;
+    for (const animation of this.active) animation.cancel();
     const target = this.available("#record-title, .detail-identity h1")[0];
-    if (target) this.pulse(target);
+    if (target) {
+      this.pulse(target);
+      this.textEcho(target);
+      this.scratch(target);
+    }
   };
 
   private onVisibility = () => {
+    this.root.dataset.uiPaused = String(document.hidden);
     this.stop();
     this.schedule();
   };
@@ -217,6 +313,7 @@ export class UiGlitch {
   dispose() {
     this.stop();
     this.layer.remove();
+    this.downlink.remove();
     this.root.removeEventListener("pointerover", this.onInteraction);
     this.root.removeEventListener("focusin", this.onInteraction);
     document.removeEventListener("lycoris:selection", this.onSelection);
