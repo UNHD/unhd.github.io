@@ -20,6 +20,33 @@
   --bloom-breath: 0;
   --bloom-progress: 0;
 }
+.bloom-downlink {
+  position: absolute;
+  inset: 8% 0 10%;
+  opacity: calc(var(--bloom-ink) * (0.18 + var(--bloom-signal) * 0.82));
+  pointer-events: none;
+}
+.bloom-byte-field {
+  position: absolute;
+  top: 0;
+  width: min(21vw, 280px);
+  height: 100%;
+  pointer-events: none;
+}
+.bloom-byte-field-left {
+  left: 1.5%;
+}
+.bloom-byte-field-right {
+  right: 1.5%;
+}
+@media (max-width: 600px) {
+  .bloom-byte-field {
+    width: 13vw;
+  }
+  .bloom-downlink {
+    opacity: calc(var(--bloom-ink) * (0.12 + var(--bloom-signal) * 0.52));
+  }
+}
 html:has(.bloom-opening),
 body:has(.bloom-opening) {
   overflow: hidden;

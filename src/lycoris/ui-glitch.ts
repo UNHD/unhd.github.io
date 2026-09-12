@@ -1,5 +1,6 @@
 import "./ui-glitch.css";
-import { signalFallMarkup } from "./signal-field";
+import { signalByte } from "./signal-field";
+import { ByteStream } from "./byte-stream";
 
 const textTargets = [
   ".brand b",
@@ -25,6 +26,8 @@ const lineTargets = ".title-rule, .mini-rule, .chapter-progress, .signal-rule";
 export class UiGlitch {
   private layer = document.createElement("div");
   private downlink = document.createElement("div");
+  private stream: ByteStream;
+  private streamTime = 0;
   private active = new Set<Animation>();
   private timer?: ReturnType<typeof setTimeout>;
   private reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -37,8 +40,8 @@ export class UiGlitch {
     this.layer.setAttribute("aria-hidden", "true");
     this.downlink.className = "ui-downlink";
     this.downlink.setAttribute("aria-hidden", "true");
-    this.downlink.innerHTML = signalFallMarkup(4);
     root.appendChild(this.downlink);
+    this.stream = new ByteStream(this.downlink, "interface");
     root.dataset.uiPaused = String(document.hidden);
     root.appendChild(this.layer);
     root.addEventListener("pointerover", this.onInteraction);
@@ -57,6 +60,16 @@ export class UiGlitch {
 
   private get paused() {
     return this.reduced || document.hidden || this.root.inert;
+  }
+
+  update(dt: number, light: boolean) {
+    if (this.paused) return;
+    this.streamTime += dt;
+    this.stream.update(
+      this.streamTime,
+      light,
+      this.root.dataset.flowerColor === "cyan",
+    );
   }
 
   private available(selector: string) {
@@ -168,19 +181,24 @@ export class UiGlitch {
     const origin = this.root.getBoundingClientRect();
     const fragment = document.createElement("span");
     fragment.className = "ui-signal-fragment";
-    fragment.style.left = `${Math.max(8, bounds.left - origin.left - 24)}px`;
-    fragment.style.top = `${Math.max(0, bounds.top - origin.top - 48)}px`;
-    fragment.textContent = "4C\n59\n..\n01\n↓";
+    fragment.style.left = `${Math.max(4, bounds.left - origin.left - 24)}px`;
+    fragment.style.top = `${Math.max(0, bounds.top - origin.top - 4)}px`;
+    const seed = Math.floor(performance.now() / 100);
+    fragment.innerHTML = Array.from(
+      { length: 3 },
+      (_, i) =>
+        `<span style="--byte-delay:${i * 160}ms">${signalByte(seed, i)}</span>`,
+    ).join("");
     this.layer.appendChild(fragment);
     this.track(
       fragment.animate(
         [
-          { opacity: 0, transform: "translateY(-12px)" },
-          { opacity: 0.52, transform: "translateY(8px)", offset: 0.16 },
-          { opacity: 0.26, transform: "translateY(68px)", offset: 0.66 },
-          { opacity: 0, transform: "translateY(118px)" },
+          { opacity: 0 },
+          { opacity: 1, offset: 0.08 },
+          { opacity: 1, offset: 0.8 },
+          { opacity: 0 },
         ],
-        { duration: 1500, easing: "linear" },
+        { duration: 1600, easing: "linear" },
       ),
       () => fragment.remove(),
     );
@@ -312,6 +330,7 @@ export class UiGlitch {
 
   dispose() {
     this.stop();
+    this.stream.dispose();
     this.layer.remove();
     this.downlink.remove();
     this.root.removeEventListener("pointerover", this.onInteraction);

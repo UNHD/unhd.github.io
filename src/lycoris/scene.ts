@@ -39,6 +39,7 @@ export class SpecimenScene {
   onOpen?: () => void;
   onReady?: () => void;
   onPhaseChange?: (phase: string) => void;
+  onFrame?: (dt: number, light: boolean) => void;
   private archive?: SpecimenArray;
   private flowerPost = new FlowerPostEffects();
   private quality = new AdaptiveQuality(
@@ -608,7 +609,9 @@ export class SpecimenScene {
   private frame() {
     const frameSeconds = this.clock.getDelta();
     const dt = Math.min(frameSeconds, 0.05);
-    if (document.hidden || !this.inViewport || !this.archive) return;
+    if (document.hidden || !this.inViewport) return;
+    this.onFrame?.(dt, this.quality.profile.name === "light");
+    if (!this.archive) return;
     if (!this.needsRender) {
       if (
         this.reduced &&

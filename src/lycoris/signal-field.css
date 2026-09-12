@@ -1,49 +1,139 @@
-/* One signal language: dim tail, brief readable fragment, downward release. */
+/* Fine transmissions: broken hairline, fading byte residues, a warm endpoint. */
 .signal-fall {
   --fall-distance: 640px;
-  --fall-opacity: 0.26;
+  --fall-opacity: 0.45;
   position: absolute;
   inset: 0;
   overflow: hidden;
   pointer-events: none;
   user-select: none;
-  mask-image: linear-gradient(transparent, #000 12%, #000 78%, transparent);
+  mask-image: linear-gradient(transparent, #000 18%, #000 70%, transparent);
 }
-.signal-fall > i {
+.signal-packet {
+  --packet-tail: 32px;
+  --packet-gap: 8px;
+  --packet-gain: 1;
   position: absolute;
+  display: block;
+  width: 38px;
+  font:
+    8px/1 Consolas,
+    var(--mono, monospace);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.08em;
+  color: #a1b0a9;
+  user-select: none;
+  pointer-events: none;
+}
+.signal-fall > .signal-packet {
   top: 0;
-  width: 20px;
-  font: 9px/1.7 var(--mono, monospace);
-  letter-spacing: 0.12em;
-  text-align: center;
-  color: var(--red, #b65a59);
-  white-space: pre;
   opacity: 0;
   animation: signal-descend var(--fall-duration) var(--fall-delay) linear
     infinite;
 }
-.signal-fall > i > span {
-  display: block;
-  color: transparent;
-  background-clip: text;
-  background-image: linear-gradient(
+.signal-thread {
+  position: absolute;
+  width: 1px;
+  height: var(--packet-tail);
+  top: 0;
+  left: 7px;
+  background: linear-gradient(
     transparent,
-    var(--red, #b65a59) 74%,
-    #e5d9c8
+    #a1b0a940 42%,
+    transparent 44%,
+    transparent 60%,
+    #a1b0a972 61%,
+    #a1b0a928 80%,
+    transparent
   );
+}
+.signal-cipher {
+  display: grid;
+  gap: var(--packet-gap);
+  padding-top: calc(var(--packet-tail) + 5px);
+}
+.signal-cipher > span {
+  display: block;
+  white-space: nowrap;
+}
+.signal-cipher > span:nth-child(1) {
+  opacity: 0.2;
+}
+.signal-cipher > span:nth-child(2) {
+  opacity: 0.42;
+}
+.signal-cipher > span:nth-child(3) {
+  opacity: 0.72;
+}
+.signal-packet small {
+  font-size: 6px;
+  margin-left: 6px;
+  opacity: 0.42;
+  vertical-align: baseline;
+}
+.signal-terminal {
+  display: block;
+  position: relative;
+  white-space: nowrap;
+  margin-top: 10px;
+  color: #d7d5c7;
+}
+.signal-terminal b {
+  font-weight: 400;
+  color: color-mix(in srgb, var(--red, #b65a59) 55%, #ddd9cc);
+}
+.signal-terminal::after {
+  content: "";
+  position: absolute;
+  top: 16px;
+  left: 7px;
+  width: 1px;
+  height: 3px;
+  background: currentColor;
+  opacity: 0.45;
+}
+.signal-fall .signal-cipher {
+  animation: signal-byte-slip var(--fall-duration) var(--fall-delay)
+    steps(1, end) infinite;
+}
+@keyframes signal-byte-slip {
+  0%,
+  36%,
+  38%,
+  100% {
+    translate: 0 0;
+  }
+  36.4% {
+    translate: 1px 1px;
+  }
+  36.8% {
+    translate: -1px 1px;
+  }
+  37.3% {
+    translate: 0 2px;
+  }
 }
 @keyframes signal-descend {
   0% {
-    transform: translateY(-120px);
+    transform: translateY(-160px);
     opacity: 0;
   }
-  8% {
-    opacity: var(--fall-opacity);
+  12% {
+    opacity: calc(var(--fall-opacity) * var(--packet-gain) * 0.38);
   }
-  68% {
-    opacity: var(--fall-opacity);
+  28% {
+    opacity: calc(var(--fall-opacity) * var(--packet-gain));
   }
-  82%,
+  48% {
+    opacity: calc(var(--fall-opacity) * var(--packet-gain) * 0.52);
+  }
+  61% {
+    opacity: calc(var(--fall-opacity) * var(--packet-gain) * 0.78);
+  }
+  78% {
+    opacity: 0;
+  }
+  86%,
   100% {
     transform: translateY(var(--fall-distance));
     opacity: 0;
@@ -118,30 +208,25 @@
 
 .ui-downlink {
   position: absolute;
-  inset: 72px 0 0;
+  inset: 92px 0 64px;
   z-index: 3;
   overflow: hidden;
   pointer-events: none;
-  --fall-distance: min(88svh, 900px);
 }
-.ui-downlink .signal-fall {
-  --fall-distance: min(88svh, 900px);
+.ui-byte-field {
+  position: absolute;
+  top: 0;
+  width: clamp(18px, 4.8vw, 82px);
+  height: 100%;
 }
-.ui-downlink .signal-fall > i:nth-child(n + 5) {
-  display: none;
+.ui-byte-field-left {
+  left: 0.6%;
+}
+.ui-byte-field-right {
+  right: 0.6%;
 }
 #stage[data-opening] .ui-downlink {
   opacity: var(--opening-ui, 0);
-}
-.bloom-downlink {
-  position: absolute;
-  inset: 0;
-  opacity: calc(var(--bloom-ink) * (0.24 + var(--bloom-signal) * 0.76));
-  pointer-events: none;
-}
-.bloom-downlink .signal-fall {
-  --fall-distance: 92svh;
-  --fall-opacity: 0.48;
 }
 .bloom-pattern-echo {
   color: #d56368;
@@ -150,7 +235,7 @@
 }
 .stage-loading .signal-fall {
   --fall-distance: 65svh;
-  --fall-opacity: 0.35;
+  --fall-opacity: 0.52;
 }
 .stage-loading[hidden] {
   display: none;
@@ -186,12 +271,15 @@
   }
 }
 [data-ui-paused="true"] .signal-fall > i,
+[data-ui-paused="true"] .signal-cipher,
 [data-ui-paused="true"] .dossier::after,
 .bloom-opening[data-paused="true"] * {
   animation-play-state: paused !important;
 }
 [data-ui-motion="reduced"] .signal-fall,
 .reduce-motion .signal-fall,
+[data-ui-motion="reduced"] .ui-downlink,
+.reduce-motion .ui-downlink,
 [data-ui-motion="reduced"] .dossier::after,
 .reduce-motion .dossier::after {
   display: none;
@@ -200,16 +288,9 @@
 .reduce-motion .stage-loading .bloom-petal {
   animation: none;
 }
-#stage:has(#scene[data-render-quality="light"])
-  .ui-downlink
-  .signal-fall
-  > i:nth-child(n + 3) {
-  display: none;
-}
 @media (max-width: 600px) {
-  .ui-downlink .signal-fall > i:nth-child(n + 3),
-  .bloom-downlink .signal-fall > i:nth-child(n + 7) {
-    display: none;
+  .ui-downlink {
+    top: 128px;
   }
   .dossier::before,
   .dossier::after {

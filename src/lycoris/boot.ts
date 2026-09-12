@@ -1,7 +1,8 @@
 import type { SpecimenScene } from "./scene";
 import flowerSvg from "./opening-flower.svg?raw";
 import flowerMark from "./flower-mark.svg?raw";
-import { signalFallMarkup } from "./signal-field";
+import { ByteStream } from "./byte-stream";
+import "./signal-field.css";
 import {
   filamentProgress,
   OpeningPlayback,
@@ -63,6 +64,7 @@ export class BootSequence {
     [];
   private captions: HTMLElement[] = [];
   private signals: { line: HTMLElement; text: HTMLElement }[] = [];
+  private stream?: ByteStream;
   private signalTick = -1;
   private signalsComplete = false;
   private frame = 0;
@@ -97,7 +99,7 @@ export class BootSequence {
       <div class="bloom-veil" aria-hidden="true"></div>
       <div class="bloom-pattern" aria-hidden="true">${gardenPattern()}</div>
       <div class="bloom-atmosphere" aria-hidden="true"></div>
-      <div class="bloom-downlink">${signalFallMarkup(12)}</div>
+      <div class="bloom-downlink" aria-hidden="true"></div>
       <div class="bloom-dust" aria-hidden="true">${Array.from({ length: 18 }, (_, i) => `<i style="left:${8 + ((i * 41) % 84)}%;top:${12 + ((i * 23) % 67)}%;--dust-index:${i}"></i>`).join("")}</div>
       <div class="bloom-top"><span>LY <i>/</i> 001</span><span>NIGHT GARDEN</span><span>秋 · 夜间观测</span></div>
       <div class="bloom-signal" aria-hidden="true"><div class="bloom-signal-heading"><i></i><span>RECONSTRUCTING A MEMORY</span><i></i></div><div class="bloom-signal-lines">${SIGNAL_LINES.map((_, i) => `<p class="bloom-signal-row${i === 4 ? " bloom-signal-major" : ""}"><span></span></p>`).join("")}</div><div class="bloom-signal-foot"><span>花开时不见叶，叶生时不见花。</span><b></b></div></div>
@@ -111,6 +113,9 @@ export class BootSequence {
       <div class="bloom-bottom"><span class="bloom-edition">LYCORIS <i>—</i> A NOCTURNAL HERBARIUM</span><div class="bloom-progress" aria-hidden="true"><i></i></div><button id="boot-skip"><span>进入花海</span><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M4 16 15 5M5 5h10v10" stroke="currentColor" stroke-width="1.2"/></svg></button></div>
       <p class="bloom-announcement" role="status">拾起盛放的片段</p>`;
     document.body.appendChild(this.element);
+    this.stream = new ByteStream(
+      this.element.querySelector(".bloom-downlink")!,
+    );
     this.root.inert = true;
     this.root.dataset.opening = "true";
     // A restored scroll position must not leave the renderer outside its viewport.
@@ -178,6 +183,7 @@ export class BootSequence {
       this.scene.hasPresentedScene,
     );
     const t = playback.time;
+    this.stream?.update(this.playback.ambientTime);
     const state = openingFrame(t);
     const skip = playback.skip;
     if (playback.requestReveal) this.scene.revealScene();
@@ -296,6 +302,8 @@ export class BootSequence {
 
   private complete() {
     this.running = false;
+    this.stream?.dispose();
+    this.stream = undefined;
     cancelAnimationFrame(this.frame);
     document.removeEventListener("visibilitychange", this.onVisibility);
     window.removeEventListener("keydown", this.onKeyDown);

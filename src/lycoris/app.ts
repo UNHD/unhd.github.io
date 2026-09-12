@@ -26,6 +26,7 @@ const number = createRollingNumber($("#record-number"), {
 });
 const title = new ScrubTitle($("#record-title"));
 export const uiGlitch = new UiGlitch(root);
+scene.onFrame = (dt, light) => uiGlitch.update(dt, light);
 export const boot = new BootSequence(scene);
 scene.reduced = prefs.reduced;
 scene.setQuality(prefs.quality);
